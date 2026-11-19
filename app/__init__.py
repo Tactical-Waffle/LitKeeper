@@ -519,7 +519,8 @@ def create_app() -> Flask:
                                     pass
 
                             category_name = story.category.name if story.category else None
-                            generate_cover_image(story.title, author_name, cover_path, category=category_name)
+                            from app.services.cover_generator import draw_story_cover
+                            draw_story_cover(story.title, author_name, cover_path, category=category_name)
                             generated += 1
 
                         if generated > 0:

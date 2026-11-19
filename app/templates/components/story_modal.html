@@ -272,6 +272,35 @@
       Edit Content
     </button>
     {% endif %}
+    {% set ai = story.ai_cover or {} %}
+    <div id="aiCoverControls" class="flex flex-col gap-1">
+      <div class="flex gap-1.5">
+        <button id="aiCoverBtn" onclick="startAiCover({{ story.id }})"
+                data-requires-online
+                {{ 'disabled' if ai.running or ai.queued else '' }}
+                class="flex-1 px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/20 rounded-md border border-violet-200/60 dark:border-violet-700 transition-all duration-200 flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-wait"
+                title="Paint cover artwork for this story with AI (Settings → AI Covers)">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path>
+          </svg>
+          <span id="aiCoverBtnLabel">{{ 'New AI Cover' if ai.has_art else 'AI Cover' }}</span>
+        </button>
+        <button id="plainCoverBtn" onclick="usePlainCover({{ story.id }})"
+                data-requires-online
+                class="{{ '' if ai.has_art and not (ai.running or ai.queued) else 'hidden' }} flex-1 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-md border border-slate-200/60 dark:border-slate-700 transition-all duration-200 flex items-center justify-center gap-1.5"
+                title="Delete the AI artwork and use the plain generated cover">
+          Plain Cover
+        </button>
+      </div>
+      <p id="aiCoverStatus" class="text-xs text-gray-500 dark:text-gray-400 {{ '' if ai.running or ai.queued or ai.error or ai.has_art else 'hidden' }}">
+        {%- if ai.running -%}Making the AI cover: {{ ai.progress or 'starting' }}…
+        {%- elif ai.queued -%}AI cover waiting its turn…
+        {%- elif ai.error -%}<span class="text-red-600 dark:text-red-400">AI cover failed: {{ ai.error }}</span>
+        {%- elif ai.has_art -%}AI cover by {{ ai.image_model }}{% if ai.cost %}, cost ${{ '%.3f' | format(ai.cost) }}{% endif %}.
+        {%- endif -%}
+      </p>
+      {% if ai.running or ai.queued %}<script>window.pollAiCover && window.pollAiCover({{ story.id }});</script>{% endif %}
+    </div>
     <div class="flex gap-1.5">
       <button class="edit-metadata-btn flex-1 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-md border border-slate-200/60 dark:border-slate-700 transition-all duration-200 flex items-center justify-center gap-1.5"
               data-requires-online

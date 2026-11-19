@@ -1,0 +1,625 @@
+"""AI cover artwork through OpenRouter, in two steps.
+
+1. A text model reads the story's title, category, tags, description and some of its text, and writes
+   a short visual description (the "scene") for the artwork.
+2. An image model paints that scene as 3:4 artwork, either with the title and author lettered into the
+   picture, or without lettering so LitKeeper adds them (Settings → AI Covers → Cover lettering).
+
+The artwork is kept in `covers/ai/<id>_<base>.art.jpg`, with the scene, models and cost in
+`covers/ai/<id>_<base>.art.json`. The story's normal cover (`covers/<id>_<base>.jpg`) is then drawn from
+it and put into the EPUB. Covers are made one at a time, in a background thread, only when asked:
+from the story window, or after each download when that is turned on. Nothing is sent to OpenRouter
+unless an API key is saved.
+"""
+from __future__ import annotations
+import base64
+import io
+import json
+import os
+import re
+import threading
+import time
+import traceback
+import urllib.error
+import urllib.request
+from collections import deque
+from datetime import datetime, timezone
+from typing import Optional
+
+from . import ai_prompts
+from .logger import log_action, log_error
+
+KEY = 'ai_covers'
+DEFAULT_TEXT_MODEL = 'deepseek/deepseek-v4-flash'
+DEFAULT_IMAGE_MODEL = 'bytedance-seed/seedream-5-0-flash'
+API = 'https://openrouter.ai/api/v1'
+CHAT = f'{API}/chat/completions'
+IMAGES = f'{API}/images'
+MODEL_NAME = re.compile(r'[@\w./:-]+')
+
+# How much of the story the text model reads: (label, words in all).
+STORY_TEXT = {
+    'opening': ('Opening only', 1200),
+    'excerpts': ('All of part 1 plus the first 20% of each later part', 40000),
+    'whole': ('The whole story (up to 40,000 words)', 40000),
+}
+LATER_PART_SHARE = 0.2
+LETTERING = {
+    'image': 'The image model letters the title and author',
+    'litkeeper': 'LitKeeper adds the title and author',
+}
+DEFAULTS = {
+    'api_key': '', 'text_model': DEFAULT_TEXT_MODEL, 'image_model': DEFAULT_IMAGE_MODEL, 'fallback_models': [],
+    'auto': False, 'story_text': 'excerpts', 'lettering': 'image', 'retry_unlettered': True, 'retry_softer': True,
+}
+
+_queue: deque = deque()
+_running: dict = {}
+_lock = threading.Lock()
+
+
+# --- Settings -------------------------------------------------------------------------------
+
+def settings() -> dict:
+    from app.models import AppConfig
+    config = AppConfig.query.filter_by(key=KEY).first()
+    value = config.get_value() if config else None
+    return {**DEFAULTS, **(value if isinstance(value, dict) else {})}
+
+
+def masked_key(key: str) -> str:
+    return f'••••{key[-4:]}' if len(key or '') > 8 else ('••••' if key else '')
+
+
+def public_settings() -> dict:
+    """Settings for the browser: the API key is replaced by a masked hint."""
+    current = settings()
+    return {**{k: v for k, v in current.items() if k != 'api_key'},
+            'has_key': bool(current['api_key']), 'key_hint': masked_key(current['api_key'])}
+
+
+def _model_names(value, label: str, limit: int) -> list[str]:
+    names = value if isinstance(value, list) else re.split(r'[\s,]+', value or '')
+    names = [n for n in dict.fromkeys(str(n).strip() for n in names) if n]
+    for name in names:
+        if len(name) > 120 or not MODEL_NAME.fullmatch(name):
+            raise ValueError(f'"{name}" is not an OpenRouter model name.')
+    if len(names) > limit:
+        raise ValueError(f'List at most {limit} {label}.')
+    return names
+
+
+def save_settings(form: dict) -> dict:
+    """Validate and save the Settings → AI Covers form. A blank API key keeps the saved one;
+    `clear_key` removes it."""
+    from app.models import AppConfig, db
+    current = settings()
+    new = dict(current)
+    key = str(form.get('api_key') or '').strip()
+    if form.get('clear_key'):
+        new['api_key'] = ''
+    elif key:
+        if len(key) > 200 or not re.fullmatch(r'[\w-]+', key):
+            raise ValueError('That does not look like an OpenRouter API key (it usually starts with sk-or-).')
+        new['api_key'] = key
+    for field, default in (('text_model', DEFAULT_TEXT_MODEL), ('image_model', DEFAULT_IMAGE_MODEL)):
+        if field in form:
+            name = str(form.get(field) or '').strip() or default
+            if len(name) > 120 or not MODEL_NAME.fullmatch(name):
+                raise ValueError(f'"{name}" is not an OpenRouter model name (for example {default}).')
+            new[field] = name
+    if 'fallback_models' in form:
+        new['fallback_models'] = _model_names(form.get('fallback_models'), 'fallback image models', 5)
+    if form.get('story_text') in STORY_TEXT:
+        new['story_text'] = form['story_text']
+    if form.get('lettering') in LETTERING:
+        new['lettering'] = form['lettering']
+    for flag in ('auto', 'retry_unlettered', 'retry_softer'):
+        if flag in form:
+            new[flag] = bool(form.get(flag))
+    config = AppConfig.query.filter_by(key=KEY).first()
+    if not config:
+        config = AppConfig(key=KEY, value_type='json', description='OpenRouter key and models for AI covers')
+        db.session.add(config)
+    config.set_value(new)
+    db.session.commit()
+    return new
+
+
+# --- Files ----------------------------------------------------------------------------------
+
+def _base(story) -> str:
+    return f'{story.id}_{story.filename_base}'
+
+
+def cover_path(story) -> str:
+    from app.utils import get_cover_directory
+    return os.path.join(get_cover_directory(), f'{_base(story)}.jpg')
+
+
+def art_paths(story) -> tuple[str, str]:
+    from app.utils import get_cover_directory
+    from .cover_generator import ai_art_paths
+    return ai_art_paths(get_cover_directory(), _base(story))
+
+
+def _read_notes(story) -> dict:
+    try:
+        with open(art_paths(story)[1], encoding='utf-8') as handle:
+            data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_notes(story, data: dict) -> None:
+    notes = art_paths(story)[1]
+    os.makedirs(os.path.dirname(notes), exist_ok=True)
+    temporary = notes + '.tmp'
+    with open(temporary, 'w', encoding='utf-8') as handle:
+        json.dump(data, handle, indent=1, ensure_ascii=False)
+    os.replace(temporary, notes)
+
+
+def info(story) -> dict:
+    """What the story window shows about the story's AI cover."""
+    art, _ = art_paths(story)
+    notes = _read_notes(story)
+    with _lock:
+        running = _running.get('story_id') == story.id
+        progress = _running.get('progress', '') if running else ''
+        queued = story.id in _queue
+    return {
+        'has_art': os.path.exists(art),
+        'running': running, 'queued': queued, 'progress': progress,
+        'configured': bool(settings()['api_key']),
+        'error': notes.get('error', ''),
+        'cost': notes.get('cost'),
+        'made': notes.get('made', ''),
+        'text_model': notes.get('text_model', ''),
+        'image_model': notes.get('image_model', ''),
+        'lettered': bool(notes.get('lettered')),
+        'softened': bool(notes.get('softened')),
+    }
+
+
+def apply_cover(story) -> None:
+    """Redraw the story's cover (over its AI artwork if it has some), put it into the EPUB, and drop the
+    cached e-reader cover so it is rebuilt from the new one."""
+    from app.models import db
+    from .cover_generator import draw_story_cover
+    from .epub_service import EpubService
+    path = cover_path(story)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    author = story.author.name if story.author else 'Unknown Author'
+    category = story.category.name if story.category else None
+    draw_story_cover(story.title, author, path, category=category)
+    epub = next((f for f in story.formats if f.format_type == 'epub'), None)
+    if epub and epub.file_path and os.path.exists(epub.file_path) and os.path.exists(path):
+        if not EpubService.update_epub_cover(epub.file_path, path):
+            log_error(f'Could not put the new cover into the EPUB for story {story.id}')
+    koreader = os.path.join(os.path.dirname(path), f'{_base(story)}_koreader.jpg')
+    if os.path.exists(koreader):
+        os.remove(koreader)
+    story.cover_filename = os.path.basename(path)
+    db.session.commit()
+
+
+def delete_art(story) -> None:
+    for path in art_paths(story):
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def use_plain_cover(story) -> None:
+    """Delete the AI artwork and go back to the generated cover."""
+    delete_art(story)
+    apply_cover(story)
+    log_action(f'AI cover removed for story {story.id}; using the generated cover')
+
+
+# --- OpenRouter -----------------------------------------------------------------------------
+
+class StopError(ValueError):
+    """A failure another model or prompt cannot fix (key refused, no credit, OpenRouter unreachable)."""
+
+
+REFUSAL = re.compile(r'moderat|content (?:policy|filter)|safety|blocked|flagged|sensitive|nsfw|inappropriate|'
+                     r'not allowed|violat|declin|refus|no picture', re.I)
+
+
+def refused(error: Exception) -> bool:
+    """The image service turned the request down because of what it shows (or returned nothing)."""
+    return bool(REFUSAL.search(str(error)))
+
+
+def _headers(api_key: str = '') -> dict:
+    headers = {'Content-Type': 'application/json', 'X-Title': 'LitKeeper',
+               'HTTP-Referer': 'https://github.com/redwoodstory/LitKeeper'}
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
+    return headers
+
+
+def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
+    """One OpenRouter request, with bounded retries for rate limits and server errors.
+    The API key travels in a header and is never logged."""
+    body = json.dumps(payload).encode()
+    for attempt in range(3):
+        request = urllib.request.Request(url, data=body, method='POST', headers=_headers(api_key))
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                result = json.loads(response.read().decode())
+            if result.get('error'):
+                raise ValueError(f"OpenRouter: {result['error'].get('message', 'request failed')}")
+            return result
+        except urllib.error.HTTPError as error:
+            detail = ''
+            try:
+                detail = json.loads(error.read().decode()).get('error', {}).get('message', '')
+            except Exception:
+                pass
+            if error.code in (429, 500, 502, 503, 504) and attempt < 2:
+                time.sleep(10 * (attempt + 1))
+                continue
+            if error.code == 401 or (error.code == 403 and not REFUSAL.search(detail)):
+                raise StopError('OpenRouter refused the API key. Check it in Settings → AI Covers.')
+            if error.code == 402:
+                raise StopError('OpenRouter reports insufficient credits. Top up at openrouter.ai/settings/credits.')
+            raise ValueError(f'OpenRouter error {error.code}{": " + detail if detail else ""}')
+        except (urllib.error.URLError, TimeoutError) as error:
+            if attempt < 2:
+                time.sleep(10 * (attempt + 1))
+                continue
+            raise StopError(f'Could not reach OpenRouter: {getattr(error, "reason", error)}')
+    raise StopError('OpenRouter did not answer.')
+
+
+def _get(path: str, api_key: str = '') -> tuple[int, dict]:
+    """GET from OpenRouter; returns (status, JSON body). Does not raise for HTTP errors."""
+    request = urllib.request.Request(f'{API}/{path}', headers=_headers(api_key))
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read().decode())
+    except urllib.error.HTTPError as error:
+        try:
+            return error.code, json.loads(error.read().decode())
+        except Exception:
+            return error.code, {}
+    except (urllib.error.URLError, TimeoutError, ValueError) as error:
+        raise ValueError(f'Could not reach OpenRouter: {getattr(error, "reason", error)}')
+
+
+def check_models() -> list[tuple[bool, str]]:
+    """Ask OpenRouter whether the saved key works and the chosen models exist and can paint 3:4 pictures.
+    Costs nothing: it only reads catalogue and account information."""
+    config = settings()
+    key = config['api_key']
+    if not key:
+        return [(False, 'No OpenRouter API key is saved yet.')]
+    results = []
+    status, body = _get('key', key)
+    if status in (401, 403):
+        return [(False, 'OpenRouter refused the API key.')]
+    if status == 200:
+        remaining = (body.get('data') or {}).get('limit_remaining')
+        results.append((remaining is None or remaining > 0.05,
+                        'API key accepted' + ('' if remaining is None else f'; ${remaining:.2f} of its spending limit remains') + '.'))
+
+    text = config['text_model']
+    status, body = _get(f'models/{text}/endpoints')
+    found = body.get('data') or {}
+    if status != 200:
+        results.append((False, f'Text model {text}: OpenRouter does not list it. Check the spelling.'))
+    elif not any(e.get('status', 0) == 0 for e in found.get('endpoints') or []):
+        results.append((False, f'Text model {text}: no provider is answering right now. Try again later or choose another.'))
+    else:
+        results.append((True, f'Text model {text}: available.'))
+
+    for index, image in enumerate([config['image_model']] + list(config.get('fallback_models') or [])):
+        role = 'Image model' if index == 0 else f'Fallback image model {index}'
+        status, body = _get(f'images/models/{image}/endpoints')
+        endpoints = body.get('endpoints') or []
+        if status != 200 or not endpoints:
+            results.append((False, f'{role} {image}: OpenRouter does not list it as an image model. Check the spelling.'))
+        elif not any('3:4' in ((e.get('supported_parameters') or {}).get('aspect_ratio') or {}).get('values', []) for e in endpoints):
+            results.append((False, f'{role} {image} cannot paint a 3:4 (portrait) picture. Choose another image model.'))
+        else:
+            price = next((p.get('cost_usd') for e in endpoints for p in e.get('pricing') or [] if p.get('billable') == 'output_image'), None)
+            results.append((True, f'{role} {image}: available' + (f', about ${price:.3f} per picture.' if price else '.')))
+    return results
+
+
+# --- What the text model reads ---------------------------------------------------------------
+
+def _chapters(story) -> list[dict]:
+    """The story's parts from its reader (JSON) file: [{'number', 'title', 'paragraphs'}]."""
+    fmt = next((f for f in story.formats if f.format_type in ('json', 'html')), None)
+    if not fmt:
+        return []
+    data = None
+    try:
+        if fmt.json_data:
+            data = json.loads(fmt.json_data)
+        elif fmt.file_path and fmt.file_path.endswith('.json') and os.path.exists(fmt.file_path):
+            with open(fmt.file_path, encoding='utf-8') as handle:
+                data = json.load(handle)
+    except (OSError, ValueError):
+        data = None
+    chapters = (data or {}).get('chapters') or []
+    return [c for c in chapters if isinstance(c, dict)]
+
+
+def _first_words(paragraphs, limit: int) -> str:
+    words: list[str] = []
+    for paragraph in paragraphs:
+        words += str(paragraph).split()
+        if len(words) >= limit:
+            break
+    return ' '.join(words[:max(0, limit)])
+
+
+def story_details(story, amount: Optional[str] = None) -> str:
+    """Title, category, tags, description and story text for the text model."""
+    amount = amount if amount in STORY_TEXT else settings().get('story_text', 'excerpts')
+    budget = STORY_TEXT.get(amount, STORY_TEXT['excerpts'])[1]
+    chapters = _chapters(story)
+    tags = ', '.join(tag.name for tag in story.tags[:15])
+    head = f'Title: {story.title}\n'
+    if story.category:
+        head += f'Category: {story.category.name}\n'
+    if tags:
+        head += f'Tags: {tags}\n'
+    if story.description:
+        head += f'Description: {story.description}\n'
+    head += f'Parts: {len(chapters) or 1}\n'
+    if not chapters:
+        return head + '(The story text is not available; use the details above.)'
+    if amount == 'opening' or len(chapters) < 2:
+        return head + f'Opening of the story:\n{_first_words([p for c in chapters for p in c.get("paragraphs", [])], budget)}'
+    text, used = [], 0
+    for index, chapter in enumerate(chapters):
+        paragraphs = chapter.get('paragraphs', [])
+        words = sum(len(str(p).split()) for p in paragraphs)
+        wanted = words if amount == 'whole' or index == 0 else max(1, round(words * LATER_PART_SHARE))
+        part = _first_words(paragraphs, min(wanted, budget - used))
+        if not part:
+            break
+        label = '' if amount == 'whole' else (' (start)' if index == 0 and len(part.split()) < words
+                                              else ' (complete)' if index == 0 else ' (first 20%)')
+        text.append(f'Part {chapter.get("number") or index + 1}{label}:\n{part}')
+        used += len(part.split())
+    return head + 'Passages from the story:\n' + '\n\n'.join(text)
+
+
+# --- Making a cover -------------------------------------------------------------------------
+
+def _set_progress(text: str) -> None:
+    with _lock:
+        _running['progress'] = text
+
+
+def write_brief(story, api_key: str, model: str) -> tuple[str, float]:
+    """The scene description for the image model, and what it cost."""
+    payload = {'model': model, 'usage': {'include': True}, 'max_tokens': 4000,
+               'reasoning': {'effort': 'low', 'exclude': True},
+               'messages': [{'role': 'system', 'content': ai_prompts.get('cover_brief')},
+                            {'role': 'user', 'content': story_details(story)}]}
+    result = _post(CHAT, payload, api_key, timeout=180)
+    choice = (result.get('choices') or [{}])[0]
+    brief = ai_prompts.tidy_reply((choice.get('message') or {}).get('content') or '')
+    if len(brief.split()) < 15:
+        finish = choice.get('finish_reason') or choice.get('native_finish_reason') or ''
+        if finish == 'length':
+            raise ValueError(f'The text model ({model}) used its whole allowance thinking and wrote no description. Try again, or choose a non-reasoning text model.')
+        if finish == 'content_filter':
+            raise ValueError(f"The text model ({model}) was blocked by its provider's content filter. Choose another text model.")
+        if brief:
+            raise ValueError(f'The text model ({model}) declined or answered too briefly: "{brief[:160]}". Try again, or choose another text model.')
+        raise ValueError(f'The text model ({model}) returned an empty reply. Try again, or choose another text model.')
+    return brief, float((result.get('usage') or {}).get('cost') or 0)
+
+
+_parameters: dict[str, tuple[float, dict]] = {}
+
+
+def _image_parameters(model: str) -> dict:
+    """The parameters an image model accepts (OpenRouter catalogue, remembered for an hour); {} if unknown."""
+    cached = _parameters.get(model)
+    if cached and time.time() - cached[0] < 3600:
+        return cached[1]
+    try:
+        status, body = _get(f'images/models/{model}/endpoints')
+    except ValueError:
+        return {}
+    merged: dict[str, set] = {}
+    for endpoint in (body.get('endpoints') or []) if status == 200 else []:
+        for name, spec in (endpoint.get('supported_parameters') or {}).items():
+            merged.setdefault(name, set()).update((spec or {}).get('values') or [])
+    _parameters[model] = (time.time(), merged)
+    return merged
+
+
+def _as_jpeg(picture: bytes) -> bytes:
+    """Artwork is kept as JPEG; models that answer in PNG or WebP are converted."""
+    from PIL import Image
+    if picture[:3] == b'\xff\xd8\xff':
+        return picture
+    with Image.open(io.BytesIO(picture)) as image:
+        out = io.BytesIO()
+        image.convert('RGB').save(out, 'JPEG', quality=93)
+        return out.getvalue()
+
+
+def paint(brief: str, api_key: str, model: str, title: str, author: str, lettered: bool) -> tuple[bytes, float]:
+    from .cover_generator import title_space
+    template = ai_prompts.get('cover_image_lettered' if lettered else 'cover_image')
+    prompt = (template.replace('{description}', brief).replace('{title_space}', f'{title_space(title):.0%}')
+              .replace('{title}', title).replace('{author}', author))
+    payload = {'model': model, 'prompt': prompt, 'n': 1, 'aspect_ratio': '3:4'}
+    supported = _image_parameters(model)
+    for name, wanted in (('resolution', '1K'), ('output_format', 'jpeg')):
+        if wanted in supported.get(name, ()):
+            payload[name] = wanted
+    if supported and 'n' not in supported:
+        payload.pop('n')
+    result = _post(IMAGES, payload, api_key)
+    images = result.get('data') or []
+    if not images or not images[0].get('b64_json'):
+        raise ValueError('The image model returned no picture. It may have declined the description; try again.')
+    return _as_jpeg(base64.b64decode(images[0]['b64_json'])), float((result.get('usage') or {}).get('cost') or 0)
+
+
+def soften(brief: str, api_key: str, model: str) -> tuple[str, float]:
+    """Ask the text model to tone a refused description down."""
+    payload = {'model': model, 'usage': {'include': True}, 'max_tokens': 3000, 'reasoning': {'effort': 'low', 'exclude': True},
+               'messages': [{'role': 'system', 'content': ai_prompts.get('cover_safer')}, {'role': 'user', 'content': brief}]}
+    result = _post(CHAT, payload, api_key, timeout=180)
+    text = ai_prompts.tidy_reply(((result.get('choices') or [{}])[0].get('message') or {}).get('content') or '')
+    if len(text.split()) < 15:
+        raise ValueError('The text model did not write a toned-down description.')
+    return text, float((result.get('usage') or {}).get('cost') or 0)
+
+
+def paint_with_fallbacks(story, brief: str, api_key: str, config: dict) -> tuple[bytes, float, dict]:
+    """Paint the cover, working through fallbacks until one succeeds:
+    1. each image model (the chosen one, then the fallbacks), with the lettering as set;
+    2. if refused and the image model was to letter the cover: each model again without lettering
+       (LitKeeper letters it), since title words often trip safety filters;
+    3. if everything was refused: a toned-down description from the text model, then each model again.
+    A failure no retry can fix (key, credit, connection) stops at once."""
+    title, author = story.title, story.author.name if story.author else ''
+    chosen = [config['image_model']] + [m for m in config.get('fallback_models') or [] if m != config['image_model']]
+    wants_lettering = config.get('lettering', 'image') == 'image'
+    attempts: list[str] = []
+    broken: set[str] = set()
+    cost = 0.0
+
+    def run(plan, description, softened):
+        for model, lettered in plan:
+            if model in broken:
+                continue
+            _set_progress(f'Painting with {model}' + (' (toned down)' if softened else ''))
+            try:
+                picture, spent = paint(description, api_key, model, title, author, lettered)
+                return picture, spent, {'model': model, 'lettered': lettered, 'softened': softened, 'brief': description}
+            except StopError:
+                raise
+            except ValueError as error:
+                attempts.append(f'{model}{" with lettering" if lettered else ""}{" (toned down)" if softened else ""}: {error}')
+                log_action(f'AI cover for story {story.id}: {attempts[-1]}')
+                if not refused(error):
+                    broken.add(model)
+        return None
+
+    plan = [(model, wants_lettering) for model in chosen]
+    if wants_lettering and config.get('retry_unlettered', True):
+        plan += [(model, False) for model in chosen]
+    done = run(plan, brief, False)
+    if not done and config.get('retry_softer', True) and any(refused(Exception(a)) for a in attempts) and len(broken) < len(chosen):
+        _set_progress('Toning down the scene')
+        softer, spent = soften(brief, api_key, config['text_model'])
+        cost += spent
+        lettering = wants_lettering and not config.get('retry_unlettered', True)
+        done = run([(model, lettering) for model in chosen], softer, True)
+    if not done:
+        raise ValueError('No image model would paint this cover. Tried: ' + '; '.join(attempts) +
+                         '. Add fallback image models in Settings → AI Covers, or edit the prompts.')
+    picture, spent, used = done
+    return picture, cost + spent, {**used, 'attempts': attempts}
+
+
+def make_cover(story_id: int) -> None:
+    """Write the scene, paint the artwork, and draw the story's cover from it."""
+    from app.models import Story, db
+    story = db.session.get(Story, story_id)
+    if not story:
+        return
+    config = settings()
+    if not config['api_key']:
+        raise ValueError('Add an OpenRouter API key in Settings → AI Covers first.')
+    _set_progress('Describing the cover')
+    brief, brief_cost = write_brief(story, config['api_key'], config['text_model'])
+    _set_progress('Painting the artwork')
+    picture, image_cost, used = paint_with_fallbacks(story, brief, config['api_key'], config)
+    art, _ = art_paths(story)
+    os.makedirs(os.path.dirname(art), exist_ok=True)
+    temporary = art + '.tmp'
+    with open(temporary, 'wb') as handle:
+        handle.write(picture)
+    os.replace(temporary, art)
+    total = round(brief_cost + image_cost, 4)
+    _write_notes(story, {'brief': used['brief'], 'text_model': config['text_model'], 'image_model': used['model'],
+                         'lettered': used['lettered'], 'softened': used['softened'], 'attempts': used['attempts'],
+                         'cost': total, 'made': datetime.now(timezone.utc).isoformat()})
+    apply_cover(story)
+    log_action(f'AI cover made for story {story_id} ({config["text_model"]}, {used["model"]}), cost ${total:.4f}')
+
+
+# --- Background worker ----------------------------------------------------------------------
+
+def start(app, story_id: int) -> str:
+    """Queue a cover for the story; returns 'started' or 'queued'."""
+    with _lock:
+        if _running.get('story_id') == story_id:
+            raise ValueError('A cover for this story is already being made.')
+        if story_id in _queue:
+            return 'queued'
+        _queue.append(story_id)
+        if _running.get('working'):
+            return 'queued'
+        _running['working'] = True
+    threading.Thread(target=_work, args=(app,), daemon=True, name='AICovers').start()
+    return 'started'
+
+
+def make_after_download(app, story_id: Optional[int]) -> None:
+    """Settings → AI Covers: queue a cover for a newly downloaded story, when that is turned on."""
+    if not story_id:
+        return
+    try:
+        config = settings()
+        if not config.get('auto') or not config['api_key']:
+            return
+        from app.models import Story, db
+        story = db.session.get(Story, story_id)
+        if not story or os.path.exists(art_paths(story)[0]):
+            return
+        start(app, story_id)
+        log_action(f'AI cover queued for new story {story_id}')
+    except ValueError:
+        pass  # Already being made.
+    except Exception as e:
+        log_error(f'Could not queue an AI cover for story {story_id}: {e}')
+
+
+def _work(app) -> None:
+    while True:
+        with _lock:
+            if not _queue:
+                _running.pop('story_id', None)
+                _running['working'] = False
+                return
+            story_id = _queue.popleft()
+            _running['story_id'], _running['progress'] = story_id, 'Starting'
+        try:
+            with app.app_context():
+                make_cover(story_id)
+        except Exception as error:
+            message = str(error) if isinstance(error, ValueError) else 'Making the cover stopped unexpectedly.'
+            log_error(f'AI cover for story {story_id} failed: {message}'
+                      + ('' if isinstance(error, ValueError) else f'\n{traceback.format_exc()}'))
+            try:
+                with app.app_context():
+                    from app.models import Story, db
+                    from .notifier import send_notification
+                    story = db.session.get(Story, story_id)
+                    if story:
+                        _write_notes(story, {**_read_notes(story), 'error': message})
+                        send_notification(f'AI cover failed for "{story.title}": {message}', is_error=True)
+            except Exception as e:
+                log_error(f'Could not record the AI cover failure for story {story_id}: {e}')
+        finally:
+            with _lock:
+                _running.pop('story_id', None)
+                _running.pop('progress', None)

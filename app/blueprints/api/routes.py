@@ -484,7 +484,9 @@ def get_epub_file(story_id: int) -> ResponseReturnValue:
     response.headers['Content-Disposition'] = f'inline; filename="{filename}"'
     return response
 
-_COVER_CACHE_HEADERS = {'Cache-Control': 'public, max-age=31536000, immutable'}
+# Covers can change (AI covers, regenerated covers) under the same URL, so browsers keep them but check
+# for a newer version each time; unchanged covers answer with a cheap "304 Not Modified".
+_COVER_CACHE_HEADERS = {'Cache-Control': 'no-cache'}
 
 
 def _ensure_base_cover(story) -> Optional[str]:
@@ -564,10 +566,16 @@ def get_story_cover_koreader(story_id: int) -> ResponseReturnValue:
     if not os.path.exists(koreader_cover_path):
         tmp_path = koreader_cover_path + ".src.jpg"
         try:
-            author_name = story.author.name if story.author else 'Unknown Author'
-            category_name = story.category.name if story.category else None
-            generate_koreader_cover_image(story.title, author_name, tmp_path, category=category_name)
-            make_koreader_cover(tmp_path, koreader_cover_path)
+            from app.services import ai_cover
+            base_cover = _ensure_base_cover(story) if os.path.exists(ai_cover.art_paths(story)[0]) else None
+            if base_cover:
+                # Stories with AI artwork use that cover on e-readers too.
+                make_koreader_cover(base_cover, koreader_cover_path)
+            else:
+                author_name = story.author.name if story.author else 'Unknown Author'
+                category_name = story.category.name if story.category else None
+                generate_koreader_cover_image(story.title, author_name, tmp_path, category=category_name)
+                make_koreader_cover(tmp_path, koreader_cover_path)
         except Exception as e:
             log_error(f"Error building koreader cover for story {story_id}: {str(e)}\n{traceback.format_exc()}")
             abort(500)
@@ -997,7 +1005,8 @@ def update_story_metadata(story_id: int) -> ResponseReturnValue:
 
                 cover_path = os.path.join(cover_directory, cover_filename)
 
-                generate_cover_image(story.title, author_name or 'Unknown Author', cover_path, category=current_category)
+                from app.services.cover_generator import draw_story_cover
+                draw_story_cover(story.title, author_name or 'Unknown Author', cover_path, category=current_category)
                 cover_regenerated = True
                 log_action(f"Auto-regenerated cover for story: {story.title}")
 
@@ -1402,6 +1411,15 @@ def get_story_card(story_id: int) -> ResponseReturnValue:
     
     return render_template('partials/story_card.html', story=story_dict)
 
+def _ai_cover_info(story) -> dict:
+    try:
+        from app.services import ai_cover
+        return ai_cover.info(story)
+    except Exception as e:
+        log_error(f"Error reading AI cover info for story {story.id}: {str(e)}")
+        return {}
+
+
 @api.route("/story/<int:story_id>/modal", methods=['GET'])
 def get_story_modal(story_id: int) -> ResponseReturnValue:
     from app.models import Story
@@ -1437,6 +1455,7 @@ def get_story_modal(story_id: int) -> ResponseReturnValue:
         'comments': story.literotica_comments,
         'in_queue': bool(story.in_queue),
         'description': story.description,
+        'ai_cover': _ai_cover_info(story),
         'reading_progress': {
             'percentage': story.reading_progress.percentage,
             'is_completed': story.reading_progress.is_completed,
@@ -1463,7 +1482,8 @@ def regenerate_cover(story_id: int) -> ResponseReturnValue:
         
         author_name = story.author.name if story.author else 'Unknown Author'
         category_name = story.category.name if story.category else None
-        generate_cover_image(story.title, author_name, cover_path, category=category_name)
+        from app.services.cover_generator import draw_story_cover
+        draw_story_cover(story.title, author_name, cover_path, category=category_name)
         log_action(f"Regenerated cover for story: {story.title}")
         
         epub_updated = False
@@ -2366,3 +2386,43 @@ def browse_global() -> ResponseReturnValue:
         return jsonify({"success": False, "message": "Failed to fetch stories. Please try again."}), 500
 
 
+
+
+# --- AI covers ------------------------------------------------------------------------------
+
+@api.route("/story/<int:story_id>/ai-cover", methods=['GET'])
+def get_ai_cover(story_id: int) -> ResponseReturnValue:
+    from app.models import Story
+    from app.services import ai_cover
+    story = Story.query.get_or_404(story_id)
+    return jsonify({"success": True, **ai_cover.info(story)})
+
+
+@api.route("/story/<int:story_id>/ai-cover", methods=['POST'])
+def make_ai_cover(story_id: int) -> ResponseReturnValue:
+    from app.models import Story
+    from app.services import ai_cover
+    story = Story.query.get_or_404(story_id)
+    if not ai_cover.settings()['api_key']:
+        return jsonify({"success": False, "message": "Add an OpenRouter API key in Settings → AI Covers first."}), 400
+    try:
+        state = ai_cover.start(current_app._get_current_object(), story.id)
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 409
+    log_action(f"AI cover {state} for story {story.id}")
+    return jsonify({"success": True, "state": state, **ai_cover.info(story)})
+
+
+@api.route("/story/<int:story_id>/ai-cover/plain", methods=['POST'])
+def use_plain_cover(story_id: int) -> ResponseReturnValue:
+    from app.models import Story
+    from app.services import ai_cover
+    story = Story.query.get_or_404(story_id)
+    if ai_cover.info(story)['running']:
+        return jsonify({"success": False, "message": "Wait until the AI cover being made is finished."}), 409
+    try:
+        ai_cover.use_plain_cover(story)
+    except Exception as e:
+        log_error(f"Error going back to the plain cover for story {story_id}: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({"success": False, "message": "Could not change the cover"}), 500
+    return jsonify({"success": True, **ai_cover.info(story)})

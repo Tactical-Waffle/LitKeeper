@@ -230,7 +230,8 @@ class BulkFormatGeneratorService:
                 cover_path = os.path.join(cover_dir, cover_filename)
 
                 category_name = story.category.name if story.category else None
-                generate_cover_image(story.title, author_name, cover_path, category=category_name)
+                from app.services.cover_generator import draw_story_cover
+                draw_story_cover(story.title, author_name, cover_path, category=category_name)
 
                 epub_fmt = next((f for f in story.formats if f.format_type == 'epub'), None)
                 if epub_fmt and os.path.exists(epub_fmt.file_path):
@@ -289,10 +290,16 @@ class BulkFormatGeneratorService:
             cover_path = os.path.join(cover_dir, filename)
             tmp_path = cover_path + ".src.jpg"
             try:
-                author_name = story.author.name if story.author else 'Unknown Author'
-                category_name = story.category.name if story.category else None
-                generate_koreader_cover_image(story.title, author_name, tmp_path, category=category_name)
-                make_koreader_cover(tmp_path, cover_path)
+                from app.services import ai_cover
+                base_cover = os.path.join(cover_dir, f"{story.id}_{story.filename_base}.jpg")
+                if os.path.exists(ai_cover.art_paths(story)[0]) and os.path.exists(base_cover):
+                    # Stories with AI artwork use that cover on e-readers too.
+                    make_koreader_cover(base_cover, cover_path)
+                else:
+                    author_name = story.author.name if story.author else 'Unknown Author'
+                    category_name = story.category.name if story.category else None
+                    generate_koreader_cover_image(story.title, author_name, tmp_path, category=category_name)
+                    make_koreader_cover(tmp_path, cover_path)
 
                 successful += 1
                 self._write_log(f"✓ Regenerated koreader cover for: {story.title}")

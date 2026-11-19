@@ -1098,3 +1098,85 @@ document.body.addEventListener('coverRegenerated', function(evt) {
   });
 });
 
+// --- AI covers ---------------------------------------------------------------------------
+(function () {
+  let pollTimer = null;
+
+  function setAiCoverStatus(info) {
+    const status = document.getElementById('aiCoverStatus');
+    const button = document.getElementById('aiCoverBtn');
+    const label = document.getElementById('aiCoverBtnLabel');
+    const plain = document.getElementById('plainCoverBtn');
+    if (!status || !button) return;
+    const busy = info.running || info.queued;
+    button.disabled = !!busy;
+    if (label) label.textContent = info.has_art ? 'New AI Cover' : 'AI Cover';
+    if (plain) plain.classList.toggle('hidden', !info.has_art || !!busy);
+    status.replaceChildren();
+    if (info.running) {
+      status.textContent = `Making the AI cover: ${info.progress || 'starting'}…`;
+    } else if (info.queued) {
+      status.textContent = 'AI cover waiting its turn…';
+    } else if (info.error) {
+      const span = document.createElement('span');
+      span.className = 'text-red-600 dark:text-red-400';
+      span.textContent = `AI cover failed: ${info.error}`;
+      status.appendChild(span);
+    } else if (info.has_art) {
+      status.textContent = `AI cover by ${info.image_model}` + (info.cost ? `, cost $${Number(info.cost).toFixed(3)}` : '') + '.';
+    }
+    status.classList.toggle('hidden', !status.textContent);
+  }
+
+  function refreshCovers(storyId) {
+    if (window.htmx) htmx.trigger(document.body, 'coverRegenerated', { storyId });
+  }
+
+  window.pollAiCover = function (storyId) {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(async () => {
+      if (!document.getElementById('aiCoverControls')) return;  // The story window was closed.
+      try {
+        const info = await (await fetch(`/api/story/${storyId}/ai-cover`)).json();
+        setAiCoverStatus(info);
+        if (info.running || info.queued) { window.pollAiCover(storyId); return; }
+        refreshCovers(storyId);
+        showToast(info.error ? 'The AI cover could not be made' : 'AI cover ready', info.error ? 'error' : 'success');
+      } catch {
+        window.pollAiCover(storyId);
+      }
+    }, 3000);
+  };
+
+  window.startAiCover = async function (storyId) {
+    const button = document.getElementById('aiCoverBtn');
+    if (button) button.disabled = true;
+    try {
+      const data = await (await fetch(`/api/story/${storyId}/ai-cover`, { method: 'POST' })).json();
+      if (!data.success) {
+        showToast(data.message || 'Could not start the AI cover', 'error');
+        if (button) button.disabled = false;
+        return;
+      }
+      setAiCoverStatus({ ...data, error: '', running: data.running || data.state === 'started', queued: data.queued || data.state === 'queued' });
+      window.pollAiCover(storyId);
+    } catch {
+      showToast('Could not start the AI cover', 'error');
+      if (button) button.disabled = false;
+    }
+  };
+
+  window.usePlainCover = async function (storyId) {
+    if (!confirm('Delete the AI artwork and go back to the plain cover?')) return;
+    try {
+      const data = await (await fetch(`/api/story/${storyId}/ai-cover/plain`, { method: 'POST' })).json();
+      if (!data.success) { showToast(data.message || 'Could not change the cover', 'error'); return; }
+      setAiCoverStatus(data);
+      refreshCovers(storyId);
+      showToast('Using the plain cover', 'success');
+    } catch {
+      showToast('Could not change the cover', 'error');
+    }
+  };
+})();
+

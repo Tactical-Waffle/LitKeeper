@@ -34,6 +34,7 @@ def index() -> ResponseReturnValue:
 
     from app.services import notifier
     notification_connections = [notifier.public_view(c) for c in notifier.load_connections()]
+    from app.services import ai_cover, ai_prompts
 
     return render_template(
         'settings.html',
@@ -53,6 +54,10 @@ def index() -> ResponseReturnValue:
         notification_events=notifier.EVENTS,
         notification_default_events=notifier.DEFAULT_EVENTS,
         notification_env_count=notifier.env_url_count(),
+        ai_cover_settings=ai_cover.public_settings(),
+        ai_cover_story_text=ai_cover.STORY_TEXT,
+        ai_cover_lettering=ai_cover.LETTERING,
+        ai_cover_prompts=ai_prompts.overview(),
     )
 
 
@@ -488,3 +493,48 @@ def test_saved_notification(connection_id: str) -> ResponseReturnValue:
     except (KeyError, ValueError) as e:
         return jsonify({'success': False, 'message': str(e)}), 400
     return _test_result(url)
+
+
+# --- AI covers -----------------------------------------------------------------------------
+
+@settings.route('/ai-covers', methods=['POST'])
+def save_ai_cover_settings() -> ResponseReturnValue:
+    from app.services import ai_cover
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    try:
+        ai_cover.save_settings(data)
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error saving AI cover settings: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'message': 'Error saving AI cover settings'}), 500
+    log_action("AI cover settings updated")
+    return jsonify({'success': True, 'settings': ai_cover.public_settings()})
+
+
+@settings.route('/ai-covers/check', methods=['POST'])
+def check_ai_cover_models() -> ResponseReturnValue:
+    from app.services import ai_cover
+    try:
+        results = ai_cover.check_models()
+    except ValueError as e:
+        results = [(False, str(e))]
+    return jsonify({'success': True, 'results': [{'ok': ok, 'message': message} for ok, message in results]})
+
+
+@settings.route('/ai-covers/prompts', methods=['POST'])
+def save_ai_cover_prompts() -> ResponseReturnValue:
+    from app.services import ai_prompts
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    try:
+        ai_prompts.save(data)
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 400
+    return jsonify({'success': True, 'prompts': ai_prompts.overview()})

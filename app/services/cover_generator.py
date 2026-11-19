@@ -476,3 +476,128 @@ def extract_cover_from_epub(epub_path: str, cover_path: str) -> bool:
         error_msg = f"Error extracting cover from EPUB: {str(e)}\n{traceback.format_exc()}"
         log_error(error_msg)
         return False
+
+
+# --- Covers drawn over AI artwork ---------------------------------------------------------------
+# AI artwork (see ai_cover.py) is kept in covers/ai/ as `<id>_<base>.art.jpg`, with notes in
+# `<id>_<base>.art.json`. The visible cover (`covers/<id>_<base>.jpg`) is drawn from it: either the
+# artwork with the title and author added by LitKeeper, or, when the image model lettered the artwork
+# itself, just the artwork framed to the cover shape.
+
+TITLE_TOP, TITLE_GAP = 70, 14
+_PLAYFAIR_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "fonts", "PlayfairDisplay-Regular.ttf")
+
+
+def ai_art_paths(cover_directory: str, filename_base: str) -> tuple[str, str]:
+    """(artwork, notes) paths for a story's AI artwork. `filename_base` includes the id prefix."""
+    folder = os.path.join(cover_directory, "ai")
+    return os.path.join(folder, f"{filename_base}.art.jpg"), os.path.join(folder, f"{filename_base}.art.json")
+
+
+def _shaded_text(draw: ImageDraw.ImageDraw, xy, text: str, font, fill=(255, 255, 255)) -> None:
+    x, y = xy
+    for dx, dy in ((0, 3), (3, 0), (2, 2), (-2, 2)):
+        draw.text((x + dx, y + dy), text, font=font, fill=(0, 0, 0, 150))
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _title_layout(draw: ImageDraw.ImageDraw, title: str):
+    """Font, lines, line heights and block height of the title at the top of a 1200×1600 AI cover."""
+    width, margin = 1200, 110
+    try:
+        title_font, lines, _ = _fit_text_to_width(draw, title or '', _PLAYFAIR_PATH, 78, width - 2 * margin, min_size=46, max_lines=3)
+    except Exception:
+        title_font = ImageFont.load_default()
+        lines = _wrap_lines(draw, title or '', title_font, width - 2 * margin)[:3]
+    heights = [draw.textbbox((0, 0), line, font=title_font)[3] - draw.textbbox((0, 0), line, font=title_font)[1] for line in lines]
+    return title_font, lines, heights, sum(heights) + TITLE_GAP * (len(lines) - 1)
+
+
+def title_space(title: str) -> float:
+    """How much of the cover's height, from the top, the title will cover (with breathing room), for the
+    image prompt's {title_space}: about 10% for one line up to about 22% for three."""
+    draw = ImageDraw.Draw(Image.new('RGB', (1200, 1600)))
+    _, _, _, block = _title_layout(draw, title)
+    return min(0.3, max(0.1, round((TITLE_TOP + block + 60) / 1600 / 0.01) * 0.01))
+
+
+def _fill_cover_frame(art_path: str) -> Image.Image:
+    """The artwork scaled and centre-cropped to 1200×1600."""
+    width, height = 1200, 1600
+    image = Image.open(art_path).convert('RGB')
+    w, h = image.size
+    scale = max(width / w, height / h)
+    image = image.resize((round(w * scale), round(h * scale)), Image.Resampling.LANCZOS)
+    left, top = (image.width - width) // 2, (image.height - height) // 2
+    return image.crop((left, top, left + width, top + height))
+
+
+def compose_art_cover(art_path: str, title: str, author: str, cover_path: str) -> None:
+    """AI artwork with the title at the top and the author at the bottom, each over a soft gradient."""
+    width, height = 1200, 1600
+    image = _fill_cover_frame(art_path).convert('RGBA')
+    draw = ImageDraw.Draw(image, 'RGBA')
+    title_font, lines, heights, block = _title_layout(draw, title)
+    try:
+        author_font, author_lines, _ = _fit_text_to_width(draw, author or '', _PLAYFAIR_PATH, 56, width - 220, min_size=36, max_lines=1)
+    except Exception:
+        author_font, author_lines = ImageFont.load_default(), [author or '']
+    author_lines = [line for line in author_lines if line][:1]
+
+    # Gradients just deep enough for the lettering, fading out well before the people in the picture.
+    shade = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    shade_draw = ImageDraw.Draw(shade)
+    fade = min(height * 0.36, TITLE_TOP + block + 170)
+    for y in range(int(fade)):
+        shade_draw.line([(0, y), (width, y)], fill=(0, 0, 0, int(165 * (1 - y / fade) ** 1.6)))
+    if author_lines:
+        bottom_fade = 260
+        for y in range(bottom_fade):
+            shade_draw.line([(0, height - 1 - y), (width, height - 1 - y)], fill=(0, 0, 0, int(150 * (1 - y / bottom_fade) ** 1.6)))
+    image = Image.alpha_composite(image, shade)
+    draw = ImageDraw.Draw(image, 'RGBA')
+
+    current_y = TITLE_TOP
+    for line, line_height in zip(lines, heights):
+        bbox = draw.textbbox((0, 0), line, font=title_font)
+        _shaded_text(draw, ((width - (bbox[2] - bbox[0])) // 2 - bbox[0], current_y - bbox[1]), line, title_font)
+        current_y += line_height + TITLE_GAP
+
+    if author_lines:
+        line = author_lines[0]
+        bbox = draw.textbbox((0, 0), line, font=author_font)
+        _shaded_text(draw, ((width - (bbox[2] - bbox[0])) // 2 - bbox[0], height - 80 - (bbox[3] - bbox[1]) - bbox[1]),
+                     line, author_font, fill=(235, 235, 235))
+
+    _finalize_cover_image(image).save(cover_path, 'JPEG', quality=92, optimize=True)
+
+
+def frame_lettered_art(art_path: str, cover_path: str) -> None:
+    """A cover lettered by the image model: fitted to the cover shape, nothing added."""
+    _finalize_cover_image(_fill_cover_frame(art_path)).save(cover_path, 'JPEG', quality=92, optimize=True)
+
+
+def _art_is_lettered(notes_path: str) -> bool:
+    import json
+    try:
+        with open(notes_path, encoding='utf-8') as handle:
+            return bool(json.load(handle).get('lettered'))
+    except (OSError, ValueError):
+        return False
+
+
+def draw_story_cover(title: str, author: str, cover_path: str, category: Optional[str] = None) -> None:
+    """Draw a story's cover: over its AI artwork when it has some, otherwise the generated design.
+    `cover_path` is `covers/<id>_<base>.jpg`; the artwork, if any, is looked up from it."""
+    directory, name = os.path.split(cover_path)
+    art, notes = ai_art_paths(directory, name[:-len('.jpg')] if name.endswith('.jpg') else name)
+    if os.path.exists(art):
+        try:
+            if _art_is_lettered(notes):
+                frame_lettered_art(art, cover_path)
+            else:
+                compose_art_cover(art, title, author, cover_path)
+            return
+        except Exception as e:
+            log_error(f"Could not draw the cover over its AI artwork ({e}); using the generated design.")
+    generate_cover_image(title, author, cover_path, category=category)

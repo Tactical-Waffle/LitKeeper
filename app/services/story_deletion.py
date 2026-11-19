@@ -50,6 +50,12 @@ class StoryDeletionService:
                         log_error(f"Failed to delete cover file {cover_file}: {str(e)}")
                         failed_files.append(cover_name)
             
+            try:
+                from app.services import ai_cover
+                ai_cover.delete_art(story)
+            except Exception as e:
+                log_error(f"Failed to delete AI cover artwork for story {story_id}: {str(e)}")
+
             SeenLiteroticaUrl.query.filter_by(story_id=story.id).delete()
             db.session.delete(story)
             db.session.commit()

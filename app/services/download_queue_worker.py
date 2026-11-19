@@ -210,6 +210,8 @@ class DownloadQueueWorker:
             if item.job_type != 'author' and downloaded:
                 from .notifier import send_notification
                 send_notification(f"Story Downloaded: '{item.title or 'Story'}' has been added to your library")
+                from .ai_cover import make_after_download
+                make_after_download(self.app, item.story_id)
 
         except Exception as e:
             error_msg = str(e)

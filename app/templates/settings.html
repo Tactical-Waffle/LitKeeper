@@ -371,6 +371,128 @@
 
   {% if enable_library %}
   <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
+    <section id="aiCoversSection">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
+        <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+        </svg>
+        AI Covers
+      </h3>
+      <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+        Paint cover artwork for a story with AI through <a href="https://openrouter.ai" target="_blank" rel="noopener" class="text-primary hover:underline">OpenRouter</a>.
+        A text model reads the story and describes a scene; an image model paints it. Uses your own OpenRouter key and credit,
+        and sends story text to OpenRouter only when a cover is made. Make a cover from a story's window with <span class="font-medium">AI Cover</span>.
+      </p>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverKey">OpenRouter API Key</label>
+          <div class="flex gap-2">
+            <input type="password" id="aiCoverKey" autocomplete="new-password"
+              placeholder="{{ ('Saved (' ~ ai_cover_settings.key_hint ~ ') — leave blank to keep') if ai_cover_settings.has_key else 'sk-or-...' }}"
+              class="flex-1 min-w-0 px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+            <button type="button" id="aiCoverRemoveKeyBtn" onclick="removeAiCoverKey()"
+              class="{{ '' if ai_cover_settings.has_key else 'hidden' }} px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg border border-red-200/60 dark:border-red-700">
+              Remove
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverTextModel">Text model (writes the scene)</label>
+            <input type="text" id="aiCoverTextModel" autocomplete="off" value="{{ ai_cover_settings.text_model }}"
+              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverImageModel">Image model (paints it)</label>
+            <input type="text" id="aiCoverImageModel" autocomplete="off" value="{{ ai_cover_settings.image_model }}"
+              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverFallbacks">Fallback image models (optional, one per line, up to 5)</label>
+          <textarea id="aiCoverFallbacks" rows="2"
+            class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">{{ ai_cover_settings.fallback_models | join('\n') }}</textarea>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Tried in order if the image model refuses or fails.</p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverStoryText">How much of the story the text model reads</label>
+            <select id="aiCoverStoryText"
+              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+              {% for key, option in ai_cover_story_text.items() %}
+              <option value="{{ key }}" {{ 'selected' if ai_cover_settings.story_text == key else '' }}>{{ option[0] }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverLettering">Cover lettering</label>
+            <select id="aiCoverLettering"
+              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+              {% for key, label in ai_cover_lettering.items() %}
+              <option value="{{ key }}" {{ 'selected' if ai_cover_settings.lettering == key else '' }}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="space-y-2 pt-1">
+          <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+            <input type="checkbox" id="aiCoverAuto" {{ 'checked' if ai_cover_settings.auto else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
+            <span>Make an AI cover for every newly downloaded story <span class="text-xs text-gray-500 dark:text-gray-400">(each one costs OpenRouter credit)</span></span>
+          </label>
+          <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+            <input type="checkbox" id="aiCoverRetryUnlettered" {{ 'checked' if ai_cover_settings.retry_unlettered else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
+            <span>If the image model refuses a lettered cover, try again without lettering and let LitKeeper add it</span>
+          </label>
+          <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+            <input type="checkbox" id="aiCoverRetrySofter" {{ 'checked' if ai_cover_settings.retry_softer else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
+            <span>If every image model refuses, tone the scene down and try once more</span>
+          </label>
+        </div>
+
+        <div class="flex flex-wrap gap-3 pt-1">
+          <button type="button" id="aiCoverSaveBtn" onclick="saveAiCoverSettings()"
+            class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">
+            Save
+          </button>
+          <button type="button" id="aiCoverCheckBtn" onclick="checkAiCoverModels()"
+            class="px-4 py-2 border border-slate-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium text-sm">
+            Check Key &amp; Models
+          </button>
+        </div>
+        <ul id="aiCoverCheckResults" class="hidden space-y-1 text-sm"></ul>
+
+        <details class="pt-2">
+          <summary class="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">Prompts</summary>
+          <div class="mt-3 space-y-4">
+            <p class="text-xs text-gray-500 dark:text-gray-400">The instructions sent to the models. Empty a box, or press Reset, to go back to the built-in prompt.</p>
+            {% for prompt in ai_cover_prompts %}
+            <div>
+              <div class="flex items-center justify-between gap-2 mb-1">
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300" for="aiPrompt_{{ prompt.name }}">{{ prompt.label }}</label>
+                <button type="button" onclick="resetAiCoverPrompt('{{ prompt.name }}')" class="text-xs text-primary hover:text-primary-dark font-medium">Reset</button>
+              </div>
+              <textarea id="aiPrompt_{{ prompt.name }}" data-prompt="{{ prompt.name }}" rows="6"
+                class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary">{{ prompt.text }}</textarea>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ prompt.help }}</p>
+            </div>
+            {% endfor %}
+            <button type="button" id="aiPromptsSaveBtn" onclick="saveAiCoverPrompts()"
+              class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">
+              Save Prompts
+            </button>
+          </div>
+        </details>
+      </div>
+    </section>
+  </div>
+
+  <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
     <section>
       <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
         <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -611,6 +733,89 @@
   }
 
   renderNotificationList();
+
+  // --- AI covers -------------------------------------------------------------------------
+  var AI_COVER_PROMPT_DEFAULTS = {{ ai_cover_prompts | map(attribute='default') | list | tojson }};
+  var AI_COVER_PROMPT_NAMES = {{ ai_cover_prompts | map(attribute='name') | list | tojson }};
+
+  async function aiCoverRequest(url, body) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+      return await response.json();
+    } catch {
+      return { success: false, message: 'Could not reach LitKeeper' };
+    }
+  }
+
+  function aiCoverKeySaved(settings) {
+    const input = document.getElementById('aiCoverKey');
+    input.value = '';
+    input.placeholder = settings.has_key ? `Saved (${settings.key_hint}) — leave blank to keep` : 'sk-or-...';
+    document.getElementById('aiCoverRemoveKeyBtn').classList.toggle('hidden', !settings.has_key);
+  }
+
+  async function saveAiCoverSettings() {
+    const button = document.getElementById('aiCoverSaveBtn');
+    const body = {
+      api_key: document.getElementById('aiCoverKey').value,
+      text_model: document.getElementById('aiCoverTextModel').value,
+      image_model: document.getElementById('aiCoverImageModel').value,
+      fallback_models: document.getElementById('aiCoverFallbacks').value,
+      story_text: document.getElementById('aiCoverStoryText').value,
+      lettering: document.getElementById('aiCoverLettering').value,
+      auto: document.getElementById('aiCoverAuto').checked,
+      retry_unlettered: document.getElementById('aiCoverRetryUnlettered').checked,
+      retry_softer: document.getElementById('aiCoverRetrySofter').checked,
+    };
+    const data = await withBusy(button, 'Saving...', () => aiCoverRequest('/settings/ai-covers', body));
+    if (!data.success) { showToast(data.message || 'Error saving AI cover settings', 'error'); return; }
+    aiCoverKeySaved(data.settings);
+    document.getElementById('aiCoverTextModel').value = data.settings.text_model;
+    document.getElementById('aiCoverImageModel').value = data.settings.image_model;
+    document.getElementById('aiCoverFallbacks').value = data.settings.fallback_models.join('\n');
+    showToast('Saved', 'success');
+  }
+
+  async function removeAiCoverKey() {
+    if (!confirm('Remove the saved OpenRouter API key? AI covers stop working until you add one again.')) return;
+    const data = await aiCoverRequest('/settings/ai-covers', { clear_key: true });
+    if (!data.success) { showToast(data.message || 'Error removing the key', 'error'); return; }
+    aiCoverKeySaved(data.settings);
+    showToast('API key removed', 'success');
+  }
+
+  async function checkAiCoverModels() {
+    const button = document.getElementById('aiCoverCheckBtn');
+    const list = document.getElementById('aiCoverCheckResults');
+    const data = await withBusy(button, 'Checking...', () => aiCoverRequest('/settings/ai-covers/check'));
+    list.replaceChildren();
+    (data.results || [{ ok: false, message: data.message || 'Check failed' }]).forEach(result => {
+      const item = document.createElement('li');
+      item.className = result.ok ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400';
+      item.textContent = (result.ok ? '✓ ' : '✗ ') + result.message;
+      list.appendChild(item);
+    });
+    list.classList.remove('hidden');
+  }
+
+  function resetAiCoverPrompt(name) {
+    const index = AI_COVER_PROMPT_NAMES.indexOf(name);
+    if (index !== -1) document.getElementById(`aiPrompt_${name}`).value = AI_COVER_PROMPT_DEFAULTS[index];
+  }
+
+  async function saveAiCoverPrompts() {
+    const body = {};
+    document.querySelectorAll('textarea[data-prompt]').forEach(box => { body[box.dataset.prompt] = box.value; });
+    const button = document.getElementById('aiPromptsSaveBtn');
+    const data = await withBusy(button, 'Saving...', () => aiCoverRequest('/settings/ai-covers/prompts', body));
+    if (!data.success) { showToast(data.message || 'Error saving prompts', 'error'); return; }
+    data.prompts.forEach(prompt => { document.getElementById(`aiPrompt_${prompt.name}`).value = prompt.text; });
+    showToast('Prompts saved', 'success');
+  }
 
   async function clearAllReadingProgress() {
     if (!confirm('Clear all reading progress?\n\nThis will reset all reading positions for all stories. All stories will start from the beginning when you next open them.\n\nThis action cannot be undone.')) {
