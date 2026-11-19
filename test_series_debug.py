@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import sys
-sys.path.insert(0, '/litkeeper')
+sys.path.insert(0, '/litkeeparr')
 
 from app.services.series_page_checker import SeriesPageChecker
 

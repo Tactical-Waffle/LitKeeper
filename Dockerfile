@@ -42,7 +42,7 @@ RUN groupadd -r -g 1000 litkeeper && \
     useradd -r -u 1000 -g litkeeper -m -s /bin/bash litkeeper
 
 # Set up application directory
-WORKDIR /litkeeper
+WORKDIR /litkeeparr
 
 # Copy files
 COPY app app/
@@ -52,11 +52,11 @@ COPY run.py gunicorn.docker.conf.py startup.sh reset_pin.py reset_webauthn.py up
 # Create required directories and set ownership
 RUN mkdir -p app/data app/stories/epubs app/stories/html app/stories/covers && \
     chmod +x startup.sh && \
-    chown -R litkeeper:root /litkeeper && \
-    chmod -R g+rwX /litkeeper
+    chown -R litkeeper:root /litkeeparr && \
+    chmod -R g+rwX /litkeeparr
 
 # Set environment variables
-ENV PYTHONPATH=/litkeeper
+ENV PYTHONPATH=/litkeeparr
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
@@ -67,5 +67,5 @@ ENV PYTHONDONTWRITEBYTECODE=1
 EXPOSE 5000
 
 # Run the application with Gunicorn via startup script
-ENTRYPOINT ["/litkeeper/startup.sh"]
+ENTRYPOINT ["/litkeeparr/startup.sh"]
 CMD ["gunicorn", "-c", "gunicorn.docker.conf.py", "app:create_app()"]

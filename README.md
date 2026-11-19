@@ -70,16 +70,18 @@ If you are migrating from an older V1 instance of LitKeeper, please refer to the
 ```yaml
 services:
   litkeeper:
-    image: ghcr.io/redwoodstory/litkeeper:latest
+    # litkeeparr is built from this repository; see DEPLOY-LITKEEPARR.md
+    build: .
+    image: litkeeparr:latest
     restart: unless-stopped
     ports:
       - "5000:5000"
     volumes:
       # Set /data mount to persist database and secret key
-      - ./data:/litkeeper/app/data
+      - ./data:/litkeeparr/app/data
       
       # Set /stories mount for all story-related files (epubs, html, covers)
-      - ./stories:/litkeeper/app/stories
+      - ./stories:/litkeeparr/app/stories
 
     environment:
       # Set to false to hide library UI (download-only mode)
@@ -147,8 +149,8 @@ Volume mounts are required for data persistence between container restarts:
 
 | Mount | Purpose | Required |
 |-------|---------|----------|
-| `./data:/litkeeper/app/data` | Database and secret key | ✅ Yes |
-| `./stories:/litkeeper/app/stories` | All story files (epubs, html, covers) | ✅ Yes |
+| `./data:/litkeeparr/app/data` | Database and secret key | ✅ Yes |
+| `./stories:/litkeeparr/app/stories` | All story files (epubs, html, covers) | ✅ Yes |
 
 **Directory structure:**
 ```

@@ -1,6 +1,8 @@
 services:
-  litkeeper:
-    image: ghcr.io/redwoodstory/litkeeper:latest
+  litkeeparr:
+    build: .
+    image: litkeeparr:latest
+    container_name: litkeeparr
     restart: unless-stopped
 
     # Run as non-root user
@@ -11,10 +13,10 @@ services:
       
     volumes:
       # Set /data mount to persist database and secret key
-      - ./data:/litkeeper/app/data
+      - ./data:/litkeeparr/app/data
       
       # Set /stories mount for all story-related files (epubs, html, covers)
-      - ./stories:/litkeeper/app/stories
+      - ./stories:/litkeeparr/app/stories
       
     environment:
       # Set to false to hide library UI (download-only mode)

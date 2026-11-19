@@ -156,8 +156,8 @@
             <p class="font-medium">Add the required volume mount{% if mount_warning.missing_mounts|length > 1 %}s{% endif %}</p>
             <p>Add {% if mount_warning.missing_mounts|length > 1 %}these volume mounts{% else %}this volume mount{% endif %} to your <code class="bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">docker-compose.yml</code>:</p>
             <pre class="bg-amber-100 dark:bg-amber-900/40 p-3 rounded text-xs overflow-x-auto">volumes:
-{% if 'data' in mount_warning.missing_mounts %}  - ./data:/litkeeper/app/data
-{% endif %}{% if 'stories' in mount_warning.missing_mounts %}  - ./stories:/litkeeper/app/stories
+{% if 'data' in mount_warning.missing_mounts %}  - ./data:/litkeeparr/app/data
+{% endif %}{% if 'stories' in mount_warning.missing_mounts %}  - ./stories:/litkeeparr/app/stories
 {% endif %}</pre>
             <p class="text-xs">After updating, restart your container: <code class="bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">docker compose down && docker compose up -d</code></p>
           </div>
