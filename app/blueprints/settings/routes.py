@@ -32,6 +32,9 @@ def index() -> ResponseReturnValue:
     covers_category_config = AppConfig.query.filter_by(key='covers_show_category').first()
     covers_show_category = covers_category_config.get_value() if covers_category_config else False
 
+    from app.services import notifier
+    notification_connections = [notifier.public_view(c) for c in notifier.load_connections()]
+
     return render_template(
         'settings.html',
         theme_preference=theme_preference,
@@ -45,6 +48,11 @@ def index() -> ResponseReturnValue:
         opds_username=opds_username,
         opds_url=opds_url,
         covers_show_category=covers_show_category,
+        notification_connections=notification_connections,
+        notification_services=notifier.SERVICES,
+        notification_events=notifier.EVENTS,
+        notification_default_events=notifier.DEFAULT_EVENTS,
+        notification_env_count=notifier.env_url_count(),
     )
 
 
@@ -365,3 +373,118 @@ def toggle_auto_update() -> ResponseReturnValue:
         return jsonify({"success": False, "message": "Error updating auto-update setting"}), 500
 
 
+
+
+# --- Notifications -------------------------------------------------------------------------
+
+def _notification_payload() -> dict:
+    data = request.get_json(silent=True) or {}
+    return data if isinstance(data, dict) else {}
+
+
+@settings.route('/notifications', methods=['GET'])
+def list_notifications() -> ResponseReturnValue:
+    from app.services import notifier
+    try:
+        return jsonify({
+            'success': True,
+            'connections': [notifier.public_view(c) for c in notifier.load_connections()],
+            'env_url_count': notifier.env_url_count(),
+        })
+    except Exception as e:
+        log_error(f"Error loading notification connections: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error loading notifications'}), 500
+
+
+@settings.route('/notifications', methods=['POST'])
+def add_notification() -> ResponseReturnValue:
+    from app.services import notifier
+    data = _notification_payload()
+    try:
+        connection = notifier.new_connection(data.get('name', ''), data.get('service', ''),
+                                             data.get('fields') or {}, data.get('events') or [])
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    try:
+        connections = notifier.load_connections()
+        connections.append(connection)
+        notifier.save_connections(connections)
+        log_action(f"Notification connection added: {connection['name']} ({connection['service']})")
+        return jsonify({'success': True, 'connection': notifier.public_view(connection)})
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error saving notification connection: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'message': 'Error saving notification'}), 500
+
+
+@settings.route('/notifications/<connection_id>', methods=['POST'])
+def update_notification(connection_id: str) -> ResponseReturnValue:
+    """Change a saved connection's name or events. Keys are changed by removing and re-adding it."""
+    from app.services import notifier
+    data = _notification_payload()
+    try:
+        connections = notifier.load_connections()
+        connection = next((c for c in connections if c.get('id') == connection_id), None)
+        if not connection:
+            return jsonify({'success': False, 'message': 'Notification not found'}), 404
+        if 'events' in data:
+            connection['events'] = notifier.clean_events(data.get('events'))
+        if 'name' in data:
+            connection['name'] = (data.get('name') or '').strip()[:60] or connection['name']
+        notifier.save_connections(connections)
+        return jsonify({'success': True, 'connection': notifier.public_view(connection)})
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error updating notification connection: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'message': 'Error saving notification'}), 500
+
+
+@settings.route('/notifications/<connection_id>', methods=['DELETE'])
+def delete_notification(connection_id: str) -> ResponseReturnValue:
+    from app.services import notifier
+    try:
+        connections = notifier.load_connections()
+        remaining = [c for c in connections if c.get('id') != connection_id]
+        if len(remaining) == len(connections):
+            return jsonify({'success': False, 'message': 'Notification not found'}), 404
+        notifier.save_connections(remaining)
+        log_action("Notification connection removed")
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error removing notification connection: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'message': 'Error removing notification'}), 500
+
+
+def _test_result(url: str) -> ResponseReturnValue:
+    from app.services import notifier
+    if notifier.send_test(url):
+        return jsonify({'success': True, 'message': 'Test notification sent'})
+    return jsonify({'success': False,
+                    'message': 'The service did not accept the test notification. Check the details and try again.'}), 502
+
+
+@settings.route('/notifications/test', methods=['POST'])
+def test_new_notification() -> ResponseReturnValue:
+    """Send a test with details that have not been saved yet."""
+    from app.services import notifier
+    data = _notification_payload()
+    try:
+        url = notifier.build_url(data.get('service', ''), data.get('fields') or {})
+        notifier.check_url(url)
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    return _test_result(url)
+
+
+@settings.route('/notifications/<connection_id>/test', methods=['POST'])
+def test_saved_notification(connection_id: str) -> ResponseReturnValue:
+    from app.services import notifier
+    connection = next((c for c in notifier.load_connections() if c.get('id') == connection_id), None)
+    if not connection:
+        return jsonify({'success': False, 'message': 'Notification not found'}), 404
+    try:
+        url = notifier.build_url(connection['service'], connection.get('fields') or {})
+    except (KeyError, ValueError) as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    return _test_result(url)

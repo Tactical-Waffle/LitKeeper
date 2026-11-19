@@ -102,7 +102,7 @@ def create_html_file(
             json.dump(story_data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, json_path)
 
-        send_notification(f"Story data created: {story_title} by {story_author}")
+        send_notification(f"Story data created: {story_title} by {story_author}", event="file")
 
         return json_path
 

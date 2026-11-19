@@ -385,7 +385,7 @@ def check_all_stories_for_updates(app: Flask) -> None:
             if updates_found:
                 summary_lines = [f"- {u['title']}: {u['old_chapters']} -> {u['new_chapters']} chapters" for u in updates_found]
                 summary = "\n".join(summary_lines)
-                send_notification(f"Story updates found ({len(updates_found)}):\n{summary}")
+                send_notification(f"Story updates found ({len(updates_found)}):\n{summary}", event="update")
                 log_action(f"Update check complete: {len(updates_found)} stories updated")
             else:
                 log_action("Update check complete: no updates found")

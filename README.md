@@ -14,7 +14,7 @@ Originally built as a simple EPUB downloader for e-readers, LitKeeper has evolve
 * **Smart Library Management:** Story categories and tags are automatically bundled into the metadata, enabling easy filtering, sorting, and searching.
 * **Custom Covers:** Automatically generate aesthetic cover images for EPUB files featuring the story title and author.
 * **Automated Series Bundling:** Detects if a story is part of a series, fetches all related parts, and compiles them into a single file. Both formats include a built-in table of contents for easy navigation.
-* **Auto-Updates & Notifications:** Receive alerts when downloads finish. LitKeeper can also check for new chapters and download updates automatically. *(Note: Update schedules are randomized in the code to prevent overwhelming source servers).*
+* **Auto-Updates & Notifications:** Receive alerts when downloads finish, through Pushover, Discord, Telegram, ntfy, Gotify or any [Apprise](https://github.com/caronc/apprise#supported-notifications) service. Set them up under **Settings → Notifications**, pick which events each one gets, and send a test. LitKeeper can also check for new chapters and download updates automatically. *(Note: Update schedules are randomized in the code to prevent overwhelming source servers).*
 * **Responsive Design:** Enjoy a mobile-friendly UI that dynamically adapts with bottom navigation and optimized spacing for smaller screens.
 * **OPDS Catalog:** Expose your library as an OPDS feed for your e-reader device. Disabled by default; enable and optionally password-protect it under **Settings → OPDS Catalog**.
 
@@ -85,6 +85,8 @@ services:
       # Set to false to hide library UI (download-only mode)
       - ENABLE_LIBRARY=true
 
+      # Notifications can be set up in Settings → Notifications instead.
+      # Addresses set here receive every alert.
       # Notification configuration based on Apprise (supports multiple services)
       # See Apprise docs for full list: https://github.com/caronc/apprise#supported-notifications
       # Examples for a few services:
@@ -92,7 +94,7 @@ services:
       # - Discord: discord://webhook_id/webhook_token
       # - Slack: slack://tokenA/tokenB/tokenC
       # - Email: mailto://user:pass@gmail.com
-      # - Pushover: pover://user_key/app_token
+      # - Pushover: pover://user_key@app_token
       - NOTIFICATION_URLS=
 
       # API token for headless/programmatic access (optional)
@@ -132,7 +134,7 @@ mkdir -p ./data ./stories
 |----------|---------|-------------|
 | `ENABLE_LIBRARY` | `true` | Show library UI with story management. Set to `false` for download-only mode (hides library, search, and reader features) |
 | `LITKEEPER_API_TOKEN` | - | API token for headless access (iOS app, scripts, automation). When set, API requests must include `X-Api-Key: <token>` |
-| `NOTIFICATION_URLS` | - | Apprise notification URLs (supports Telegram, Discord, Slack, Email, Pushover, etc.) |
+| `NOTIFICATION_URLS` | - | Apprise notification URLs (supports Telegram, Discord, Slack, Email, Pushover, etc.). Optional: notifications can also be added under **Settings → Notifications**, where you can choose which events each one receives and send a test. |
 | `EXTERNAL_EPUB_PATH` | - | Optional path to copy EPUBs for external app integration (e.g., Calibre-Web auto-import) |
 | `WEBAUTHN_RP_ID` | *(auto)* | Passkey relying party hostname (e.g. `myapp.example.com`). Auto-detected from the request — only set this if a reverse proxy masks the real hostname. Bare hostname only, no port or scheme. |
 | `WEBAUTHN_ORIGIN` | *(auto)* | Full origin for passkey verification (e.g. `https://myapp.example.com`). Auto-detected from the request — only set this if a reverse proxy masks the real hostname. |

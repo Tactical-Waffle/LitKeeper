@@ -299,6 +299,76 @@
     </section>
   </div>
 
+  <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
+    <section id="notificationsSection">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
+        <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+        </svg>
+        Notifications
+      </h3>
+      <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+        Get alerts on your phone or chat app when stories download, updates are found, or something goes wrong.
+      </p>
+
+      {% if notification_env_count %}
+      <div class="mb-4 px-4 py-3 bg-slate-50 dark:bg-gray-900/50 border border-slate-200 dark:border-gray-700 rounded-lg">
+        <p class="text-xs text-gray-600 dark:text-gray-400">
+          {{ notification_env_count }} notification address{{ 'es' if notification_env_count != 1 else '' }} also set with
+          <span class="font-mono">NOTIFICATION_URLS</span> in your Docker configuration. Those receive every alert.
+        </p>
+      </div>
+      {% endif %}
+
+      <div id="notificationList" class="space-y-3 mb-4"></div>
+      <p id="notificationEmpty" class="hidden text-sm text-gray-500 dark:text-gray-400 mb-4">No notifications set up yet.</p>
+
+      <button id="addNotificationBtn" type="button" onclick="showNotificationForm(true)"
+        class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">
+        Add Notification
+      </button>
+
+      <div id="notificationForm" class="hidden space-y-3 border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="notificationService">Service</label>
+            <select id="notificationService" onchange="renderNotificationFields()"
+              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+              {% for key, service in notification_services.items() %}
+              <option value="{{ key }}">{{ service.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="notificationName">Name</label>
+            <input type="text" id="notificationName" maxlength="60" autocomplete="off" placeholder="e.g. My phone"
+              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+          </div>
+        </div>
+        <div id="notificationFields" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+        <div>
+          <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Notify me about</p>
+          <div id="notificationFormEvents" class="flex flex-wrap gap-x-5 gap-y-2"></div>
+        </div>
+        <div class="flex flex-wrap gap-3 pt-1">
+          <button type="button" id="notificationTestBtn" onclick="testNewNotification()"
+            class="px-4 py-2 border border-slate-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium text-sm">
+            Test
+          </button>
+          <button type="button" id="notificationSaveBtn" onclick="saveNewNotification()"
+            class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">
+            Save
+          </button>
+          <button type="button" onclick="showNotificationForm(false)"
+            class="px-4 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white font-medium text-sm">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </section>
+  </div>
+
   {% if enable_library %}
   <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
     <section>
@@ -356,6 +426,192 @@
 </div>
 
 <script>
+  // --- Notifications ---------------------------------------------------------------------
+  var NOTIFICATION_SERVICES = {{ notification_services | tojson }};
+  var NOTIFICATION_EVENTS = {{ notification_events.items() | list | tojson }};  // [key, label] pairs, in display order
+  var NOTIFICATION_DEFAULT_EVENTS = {{ notification_default_events | tojson }};
+  var notificationConnections = {{ notification_connections | tojson }};
+
+  var notificationInputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary';
+
+  function notificationEventBoxes(container, selected, onChange) {
+    container.replaceChildren();
+    NOTIFICATION_EVENTS.forEach(([key, label]) => {
+      const wrap = document.createElement('label');
+      wrap.className = 'flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = key;
+      box.checked = selected.includes(key);
+      box.className = 'rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary';
+      if (onChange) box.addEventListener('change', onChange);
+      wrap.append(box, document.createTextNode(label));
+      container.appendChild(wrap);
+    });
+  }
+
+  function checkedEvents(container) {
+    return [...container.querySelectorAll('input[type=checkbox]:checked')].map(box => box.value);
+  }
+
+  function renderNotificationList() {
+    const list = document.getElementById('notificationList');
+    list.replaceChildren();
+    document.getElementById('notificationEmpty').classList.toggle('hidden', notificationConnections.length > 0);
+    notificationConnections.forEach(connection => {
+      const card = document.createElement('div');
+      card.className = 'px-4 py-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-slate-200/60 dark:border-gray-700/60';
+
+      const top = document.createElement('div');
+      top.className = 'flex items-start justify-between gap-3 mb-2';
+      const info = document.createElement('div');
+      info.className = 'min-w-0';
+      const title = document.createElement('p');
+      title.className = 'text-sm font-medium text-gray-900 dark:text-white';
+      title.textContent = connection.name;
+      const detail = document.createElement('p');
+      detail.className = 'text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate';
+      detail.textContent = [connection.service_label, ...connection.details.map(d => `${d.label} ${d.value}`)].join(' · ');
+      info.append(title, detail);
+
+      const buttons = document.createElement('div');
+      buttons.className = 'flex items-center gap-3 flex-shrink-0';
+      const test = document.createElement('button');
+      test.type = 'button';
+      test.className = 'text-xs text-primary hover:text-primary-dark font-medium';
+      test.textContent = 'Test';
+      test.addEventListener('click', () => testSavedNotification(connection.id, test));
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'text-xs text-red-600 hover:text-red-700 dark:text-red-400 font-medium';
+      remove.textContent = 'Remove';
+      remove.addEventListener('click', () => removeNotification(connection.id, connection.name));
+      buttons.append(test, remove);
+      top.append(info, buttons);
+
+      const events = document.createElement('div');
+      events.className = 'flex flex-wrap gap-x-5 gap-y-2';
+      notificationEventBoxes(events, connection.events, () => updateNotificationEvents(connection.id, events));
+      card.append(top, events);
+      list.appendChild(card);
+    });
+  }
+
+  function renderNotificationFields() {
+    const service = NOTIFICATION_SERVICES[document.getElementById('notificationService').value];
+    const container = document.getElementById('notificationFields');
+    container.replaceChildren();
+    service.fields.forEach(field => {
+      const wrap = document.createElement('div');
+      const label = document.createElement('label');
+      label.className = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1';
+      label.htmlFor = `notificationField_${field.name}`;
+      label.textContent = field.label + (field.optional ? ' (optional)' : '');
+      let input;
+      if (field.choices) {
+        input = document.createElement('select');
+        field.choices.forEach(([value, text]) => {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = text;
+          option.selected = value === field.default;
+          input.appendChild(option);
+        });
+      } else {
+        input = document.createElement('input');
+        input.type = field.secret ? 'password' : 'text';
+        input.autocomplete = 'off';
+        if (field.placeholder) input.placeholder = field.placeholder;
+      }
+      input.id = `notificationField_${field.name}`;
+      input.dataset.field = field.name;
+      input.className = notificationInputClass;
+      wrap.append(label, input);
+      container.appendChild(wrap);
+    });
+  }
+
+  function showNotificationForm(show) {
+    document.getElementById('notificationForm').classList.toggle('hidden', !show);
+    document.getElementById('addNotificationBtn').classList.toggle('hidden', show);
+    if (show) {
+      document.getElementById('notificationName').value = '';
+      renderNotificationFields();
+      notificationEventBoxes(document.getElementById('notificationFormEvents'), NOTIFICATION_DEFAULT_EVENTS);
+    }
+  }
+
+  function notificationFormData() {
+    const fields = {};
+    document.querySelectorAll('#notificationFields [data-field]').forEach(input => { fields[input.dataset.field] = input.value; });
+    return {
+      service: document.getElementById('notificationService').value,
+      name: document.getElementById('notificationName').value,
+      fields,
+      events: checkedEvents(document.getElementById('notificationFormEvents')),
+    };
+  }
+
+  async function notificationRequest(url, method, body) {
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return await response.json();
+    } catch {
+      return { success: false, message: 'Could not reach LitKeeper' };
+    }
+  }
+
+  async function withBusy(button, busyText, work) {
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = busyText;
+    try { return await work(); } finally { button.disabled = false; button.textContent = original; }
+  }
+
+  async function testNewNotification() {
+    const button = document.getElementById('notificationTestBtn');
+    const data = await withBusy(button, 'Sending...', () => notificationRequest('/settings/notifications/test', 'POST', notificationFormData()));
+    showToast(data.message || (data.success ? 'Test notification sent' : 'Test failed'), data.success ? 'success' : 'error');
+  }
+
+  async function saveNewNotification() {
+    const button = document.getElementById('notificationSaveBtn');
+    const data = await withBusy(button, 'Saving...', () => notificationRequest('/settings/notifications', 'POST', notificationFormData()));
+    if (!data.success) { showToast(data.message || 'Error saving notification', 'error'); return; }
+    notificationConnections.push(data.connection);
+    renderNotificationList();
+    showNotificationForm(false);
+    showToast('Notification added', 'success');
+  }
+
+  async function testSavedNotification(id, button) {
+    const data = await withBusy(button, 'Sending...', () => notificationRequest(`/settings/notifications/${id}/test`, 'POST'));
+    showToast(data.message || (data.success ? 'Test notification sent' : 'Test failed'), data.success ? 'success' : 'error');
+  }
+
+  async function updateNotificationEvents(id, container) {
+    const data = await notificationRequest(`/settings/notifications/${id}`, 'POST', { events: checkedEvents(container) });
+    if (!data.success) { showToast(data.message || 'Error saving notification', 'error'); return; }
+    const index = notificationConnections.findIndex(c => c.id === id);
+    if (index !== -1) notificationConnections[index] = data.connection;
+    showToast('Saved', 'success');
+  }
+
+  async function removeNotification(id, name) {
+    if (!confirm(`Remove the notification "${name}"?`)) return;
+    const data = await notificationRequest(`/settings/notifications/${id}`, 'DELETE');
+    if (!data.success) { showToast(data.message || 'Error removing notification', 'error'); return; }
+    notificationConnections = notificationConnections.filter(c => c.id !== id);
+    renderNotificationList();
+    showToast('Notification removed', 'success');
+  }
+
+  renderNotificationList();
+
   async function clearAllReadingProgress() {
     if (!confirm('Clear all reading progress?\n\nThis will reset all reading positions for all stories. All stories will start from the beginning when you next open them.\n\nThis action cannot be undone.')) {
       return;

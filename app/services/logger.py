@@ -23,14 +23,15 @@ url_logger = _setup_console_logger('litkeeper.url')
 def _log_startup_info() -> None:
     """Log startup notification configuration information."""
     if action_logger:
-        from .notifier import NOTIFICATION_URLS_RAW, NOTIFICATION_URLS, ENABLE_NOTIFICATIONS
+        from .notifier import NOTIFICATION_URLS, ENABLE_NOTIFICATIONS
+        # Notification URLs usually contain account keys, so only the service
+        # type (the part before "://") is logged, never the URL itself.
+        urls = [url.strip() for url in NOTIFICATION_URLS if url.strip()]
         action_logger.info("[STARTUP] Notification configuration loaded")
-        action_logger.info(f"[STARTUP] NOTIFICATION_URLS_RAW: '{NOTIFICATION_URLS_RAW[:100]}...'")
-        action_logger.info(f"[STARTUP] NOTIFICATION_URLS_RAW length: {len(NOTIFICATION_URLS_RAW)}")
-        action_logger.info(f"[STARTUP] NOTIFICATION_URLS after split: {len(NOTIFICATION_URLS)} URLs")
-        for i, url in enumerate(NOTIFICATION_URLS):
-            url_preview = url[:50] + "..." if len(url) > 50 else url
-            action_logger.info(f"[STARTUP] URL {i+1}: '{url_preview}' (length: {len(url)})")
+        action_logger.info(f"[STARTUP] NOTIFICATION_URLS: {len(urls)} URLs")
+        for i, url in enumerate(urls):
+            scheme = url.split('://', 1)[0] if '://' in url else 'unknown'
+            action_logger.info(f"[STARTUP] URL {i+1}: {scheme}://…")
         action_logger.info(f"[STARTUP] ENABLE_NOTIFICATIONS: {ENABLE_NOTIFICATIONS}")
 
 def log_action(message: str) -> None:

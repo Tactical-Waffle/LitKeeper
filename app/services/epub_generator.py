@@ -206,7 +206,7 @@ def create_epub_file(
             'ignore_ncx': True
         })
         
-        send_notification(f"EPUB created: {story_title} by {story_author}")
+        send_notification(f"EPUB created: {story_title} by {story_author}", event="file")
         
         return epub_path
 
