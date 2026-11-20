@@ -95,6 +95,26 @@ def download_log(name: str) -> ResponseReturnValue:
     return send_file(path, mimetype='text/plain', as_attachment=True, download_name=name, max_age=0)
 
 
+LOG_TAIL_DEFAULT = 500
+LOG_TAIL_MAX = 5000
+
+
+@settings.route('/logs/<name>/tail', methods=['GET'])
+def view_log(name: str) -> ResponseReturnValue:
+    """The newest lines of a log, for reading in Settings without downloading it."""
+    from flask import abort
+    from app.services.logger import LOG_FILES, tail_log
+    if name not in LOG_FILES:
+        abort(404)
+    try:
+        count = int(request.args.get('lines', LOG_TAIL_DEFAULT))
+    except ValueError:
+        count = LOG_TAIL_DEFAULT
+    count = max(1, min(count, LOG_TAIL_MAX))
+    lines = tail_log(name, count)
+    return jsonify({'success': True, 'name': name, 'lines': lines, 'count': len(lines)})
+
+
 @settings.route('/theme-preference', methods=['GET'])
 def get_theme_preference() -> ResponseReturnValue:
     try:

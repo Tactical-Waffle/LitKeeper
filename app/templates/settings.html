@@ -541,17 +541,27 @@
         The main log has downloads, errors and page loads. The API log has every API call, kept separate because
         there are a lot of them. Each file starts a new one at 5 MB and keeps the last 5.
       </p>
-      <div class="flex flex-wrap gap-2">
-        {% for log in log_files %}
-        <a href="/settings/logs/{{ log.name }}" hx-boost="false"
-           class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-slate-50 dark:hover:bg-gray-700 text-sm font-medium transition-all duration-200">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-          </svg>
-          {{ log.label }} <span class="text-xs text-gray-500 dark:text-gray-400">{{ log.size }}</span>
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <div class="inline-flex rounded-lg border border-slate-200 dark:border-gray-700 p-1 bg-slate-50 dark:bg-gray-900" role="tablist" aria-label="Which log">
+          {% for log in log_files %}
+          <button type="button" role="tab" data-log-name="{{ log.name }}" onclick="loadLog('{{ log.name }}')"
+            class="log-tab h-8 px-3 rounded-md text-sm font-medium transition-all duration-200">
+            {{ log.label }} <span class="text-xs opacity-70">{{ log.size }}</span>
+          </button>
+          {% endfor %}
+        </div>
+        <button type="button" id="logRefreshBtn" onclick="loadLog()"
+          class="h-10 px-3 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-slate-50 dark:hover:bg-gray-700 text-sm font-medium transition-all duration-200">
+          Refresh
+        </button>
+        <a id="logDownloadLink" href="/settings/logs/litkeeper.log" hx-boost="false"
+          class="h-10 inline-flex items-center px-3 rounded-lg text-sm font-medium text-primary hover:underline">
+          Download
         </a>
-        {% endfor %}
       </div>
+      <p id="logInfo" class="text-xs text-gray-500 dark:text-gray-400 mb-2">Loading…</p>
+      <pre id="logLines" tabindex="0" aria-label="Log lines, newest at the bottom"
+        class="h-96 overflow-auto rounded-lg border border-slate-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-950 p-3 text-[11px] leading-relaxed font-mono text-gray-800 dark:text-gray-200 whitespace-pre"></pre>
     </section>
   </div>
 
@@ -559,6 +569,45 @@
 </div>
 
 <script>
+  // --- Logs ------------------------------------------------------------------------------
+  var LOG_LINES = 500;
+  var currentLogName = 'litkeeper.log';
+
+  async function loadLog(name) {
+    if (name) currentLogName = name;
+    document.querySelectorAll('.log-tab').forEach(tab => {
+      const on = tab.dataset.logName === currentLogName;
+      tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      tab.classList.toggle('bg-white', on);
+      tab.classList.toggle('dark:bg-gray-800', on);
+      tab.classList.toggle('shadow-sm', on);
+      tab.classList.toggle('text-gray-900', on);
+      tab.classList.toggle('dark:text-white', on);
+      tab.classList.toggle('text-gray-600', !on);
+      tab.classList.toggle('dark:text-gray-400', !on);
+    });
+    const box = document.getElementById('logLines');
+    const info = document.getElementById('logInfo');
+    const download = document.getElementById('logDownloadLink');
+    if (!box) return;
+    if (download) download.href = `/settings/logs/${currentLogName}`;
+    info.textContent = 'Loading…';
+    try {
+      const response = await fetch(`/settings/logs/${currentLogName}/tail?lines=${LOG_LINES}`);
+      const data = await response.json();
+      if (!data.success) throw new Error();
+      box.textContent = data.lines.length ? data.lines.join('\n') : 'Nothing logged yet.';
+      info.textContent = data.count >= LOG_LINES
+        ? `Last ${LOG_LINES} lines, newest at the bottom. Updated ${new Date().toLocaleTimeString()}.`
+        : `${data.count} ${data.count === 1 ? 'line' : 'lines'}, newest at the bottom. Updated ${new Date().toLocaleTimeString()}.`;
+      box.scrollTop = box.scrollHeight;
+    } catch (e) {
+      info.textContent = 'Could not load the log.';
+    }
+  }
+
+  loadLog();
+
   // --- Notifications ---------------------------------------------------------------------
   var NOTIFICATION_SERVICES = {{ notification_services | tojson }};
   var NOTIFICATION_EVENTS = {{ notification_events.items() | list | tojson }};  // [key, label] pairs, in display order

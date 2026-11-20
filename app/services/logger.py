@@ -70,6 +70,34 @@ def setup_file_logging() -> None:
             logger.addHandler(handler)
 
 
+def _last_lines_of_file(path: str, count: int) -> list[str]:
+    """The last `count` lines of a file, read backwards from the end so big files stay cheap."""
+    if count <= 0 or not os.path.exists(path):
+        return []
+    block = 64 * 1024
+    data = b''
+    with open(path, 'rb') as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        while position > 0 and data.count(b'\n') <= count:
+            step = min(block, position)
+            position -= step
+            handle.seek(position)
+            data = handle.read(step) + data
+    lines = data.decode('utf-8', errors='replace').splitlines()
+    return lines[-count:]
+
+
+def tail_log(name: str, count: int = 500) -> list[str]:
+    """The newest `count` lines of one of LitKeeper's logs, oldest first. If the current file
+    has just been started afresh, the end of the previous one (name.1) fills the gap."""
+    path = log_file_path(name)
+    lines = _last_lines_of_file(path, count)
+    if len(lines) < count:
+        lines = _last_lines_of_file(path + '.1', count - len(lines)) + lines
+    return lines
+
+
 def is_api_path(path: str) -> bool:
     """Requests counted as API calls: the JSON API, the reader's API, the queue's API and the OPDS feed."""
     return path.startswith(('/api/', '/epub/api/', '/queue/api/', '/opds'))

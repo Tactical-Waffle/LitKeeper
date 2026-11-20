@@ -182,6 +182,28 @@ class TestLogging:
         assert b'does-not-exist-for-download-test' in response.data
         assert client.get('/settings/logs/litkeeper.log').status_code == 200
 
+    def test_view_last_lines(self, client: FlaskClient) -> None:
+        from app.services.logger import log_file_path
+        Path(log_file_path('api.log')).write_text(''.join(f'line {n}\n' for n in range(1, 1201)))
+        data = client.get('/settings/logs/api.log/tail').get_json()
+        assert data['count'] == 500
+        assert data['lines'][0] == 'line 701' and data['lines'][-1] == 'line 1200'
+        assert client.get('/settings/logs/api.log/tail?lines=3').get_json()['lines'] == ['line 1198', 'line 1199', 'line 1200']
+
+    def test_view_fills_from_previous_file_after_rotation(self, client: FlaskClient) -> None:
+        from app.services.logger import log_file_path
+        path = Path(log_file_path('api.log'))
+        Path(str(path) + '.1').write_text(''.join(f'old {n}\n' for n in range(1, 11)))
+        path.write_text('new 1\nnew 2\n')
+        lines = client.get('/settings/logs/api.log/tail?lines=5').get_json()['lines']
+        assert lines == ['old 8', 'old 9', 'old 10', 'new 1', 'new 2']
+
+    def test_view_empty_and_unknown_logs(self, client: FlaskClient) -> None:
+        from app.services.logger import log_file_path
+        Path(log_file_path('api.log')).unlink(missing_ok=True)
+        assert client.get('/settings/logs/api.log/tail?lines=abc').get_json()['count'] == 0
+        assert client.get('/settings/logs/secret.key/tail').status_code == 404
+
     @pytest.mark.parametrize('name', ['secret.key', '..%2Flitkeeper.db', 'bulk_generation.log'])
     def test_only_log_files_can_be_downloaded(self, client: FlaskClient, name) -> None:
         assert client.get(f'/settings/logs/{name}').status_code == 404
@@ -189,6 +211,7 @@ class TestLogging:
     def test_settings_lists_logs_and_has_no_theme_section(self, client: FlaskClient) -> None:
         page = client.get('/settings/').data
         assert b'id="logsSection"' in page
+        assert b'id="logLines"' in page
         assert b'API Log' in page
         assert b'data-theme-option' not in page
 
