@@ -46,6 +46,8 @@ function _buildLibraryParams() {
   if (pageLengthFilter && pageLengthFilter.dataset.maxPages) params.append('max_pages', pageLengthFilter.dataset.maxPages);
   if (sourceFilter && sourceFilter.value) params.append('source', sourceFilter.value);
   if (userRatingFilter && userRatingFilter.value) params.append('user_rating', userRatingFilter.value);
+  const queueOnlyInput = document.getElementById('queueOnlyInput');
+  if (queueOnlyInput && queueOnlyInput.value === 'true') params.append('queue_only', 'true');
   return params;
 }
 
@@ -651,6 +653,70 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 300);
   }, 3000);
 }
+
+// --- Reading queue ---
+
+const QUEUE_BTN_ON = ['bg-indigo-600', 'text-white', 'border-indigo-600', 'hover:bg-indigo-700'];
+const QUEUE_BTN_OFF = ['text-indigo-600', 'dark:text-indigo-400', 'hover:text-indigo-700', 'dark:hover:text-indigo-300', 'hover:bg-indigo-50', 'dark:hover:bg-indigo-900/20', 'border-indigo-200/60', 'dark:border-indigo-700'];
+
+function applyQueueButtonState(button, inQueue) {
+  button.dataset.inQueue = inQueue ? 'true' : 'false';
+  button.setAttribute('aria-pressed', inQueue ? 'true' : 'false');
+  button.title = inQueue ? 'In your reading queue — click to remove' : 'Add to your reading queue';
+  button.classList.remove(...(inQueue ? QUEUE_BTN_OFF : QUEUE_BTN_ON));
+  button.classList.add(...(inQueue ? QUEUE_BTN_ON : QUEUE_BTN_OFF));
+  const label = button.querySelector('.queue-toggle-label');
+  if (label) label.textContent = inQueue ? 'In Queue' : 'Add to Queue';
+  const icon = button.querySelector('.queue-toggle-icon');
+  if (icon) icon.setAttribute('fill', inQueue ? 'currentColor' : 'none');
+}
+
+function updateQueueCountBadge(count) {
+  const badge = document.getElementById('queueCountBadge');
+  if (!badge || typeof count !== 'number') return;
+  badge.textContent = count;
+  badge.classList.toggle('hidden', count === 0);
+}
+
+function updateLibraryCardQueueBadge(storyId, inQueue) {
+  document.querySelectorAll(`[data-story-id="${storyId}"] .card-queue-badge`).forEach(badge => {
+    badge.classList.toggle('hidden', !inQueue);
+  });
+}
+
+window.toggleStoryQueue = async function(storyId, button) {
+  const newValue = button.dataset.inQueue !== 'true';
+  button.disabled = true;
+
+  try {
+    const response = await fetch(`/api/story/${storyId}/queue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ in_queue: newValue })
+    });
+    const data = await response.json();
+    if (!response.ok || typeof data.in_queue !== 'boolean') {
+      throw new Error(data.message || 'Failed to update reading queue');
+    }
+
+    // The modal renders its action buttons twice (mobile + desktop layouts).
+    document.querySelectorAll(`.queue-toggle-btn[data-story-id="${storyId}"]`).forEach(btn => {
+      applyQueueButtonState(btn, data.in_queue);
+    });
+    updateLibraryCardQueueBadge(storyId, data.in_queue);
+    updateQueueCountBadge(data.queue_count);
+    showToast(data.in_queue ? 'Added to reading queue' : 'Removed from reading queue', 'success');
+
+    // In the queue view the card should appear/disappear immediately.
+    const queueOnlyInput = document.getElementById('queueOnlyInput');
+    if (queueOnlyInput && queueOnlyInput.value === 'true') refreshLibrary();
+  } catch (error) {
+    console.error('Reading queue toggle error:', error);
+    showToast('Failed to update reading queue', 'error');
+  } finally {
+    button.disabled = false;
+  }
+};
 
 window.toggleStoryAutoUpdate = async function(storyId, button) {
   const currentlyEnabled = button.dataset.autoUpdateEnabled === 'true';

@@ -20,6 +20,7 @@ Originally built as a simple EPUB downloader for e-readers, LitKeeper has evolve
 * **Light & Dark Mode:** Switch with the sun/moon button at the top of the screen.
 * **Logs:** LitKeeper writes `logs/litkeeper.log` (downloads, errors, page loads) and a separate `logs/api.log` (every API call, including calls to OpenRouter) inside the data folder. Each starts a new file every day at midnight and keeps the last 14 days (change with `LOG_RETENTION_DAYS`). Read the newest 500 lines, or download the whole file, under **Settings → Logs**.
 * **Responsive Design:** Enjoy a mobile-friendly UI that dynamically adapts with bottom navigation and optimized spacing for smaller screens.
+* **Reading Queue:** Save stories to read next with **Add to Queue** in any story's details, then switch the library to the **Reading Queue** view to see them oldest-first. Queued stories get a bookmark badge on their cover, and finishing a story takes it off the queue automatically.
 * **OPDS Catalog:** Expose your library as an OPDS feed for your e-reader device. Disabled by default; enable and optionally password-protect it under **Settings → OPDS Catalog**.
 
 ### Downloading
