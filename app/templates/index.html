@@ -601,6 +601,30 @@ function toggleAddStories() {
     {% endif %}
   </div>
 
+  {# Library / Reading Queue view switch. queue_only rides along on every
+     /library/filter request via the hidden input below. #}
+  <input type="hidden" id="queueOnlyInput" name="queue_only" value="false">
+  <div id="libraryViewTabs" role="tablist" aria-label="Library view"
+       class="inline-flex p-0.5 mb-3 rounded-lg bg-slate-100 dark:bg-gray-900/60 border border-slate-200 dark:border-gray-700">
+    <button type="button" role="tab" id="libraryViewAllTab" aria-selected="true"
+            data-requires-online
+            onclick="setLibraryQueueView(false)"
+            class="library-view-tab px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200">
+      All Stories
+    </button>
+    <button type="button" role="tab" id="libraryViewQueueTab" aria-selected="false"
+            data-requires-online
+            onclick="setLibraryQueueView(true)"
+            class="library-view-tab px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 inline-flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+      </svg>
+      Reading Queue
+      <span id="queueCountBadge"
+            class="{{ '' if queue_count else 'hidden' }} min-w-[1.25rem] px-1.5 py-0.5 text-[10px] leading-none font-semibold rounded-full bg-slate-200 dark:bg-gray-700 text-slate-700 dark:text-gray-200">{{ queue_count }}</span>
+    </button>
+  </div>
+
   <div id="libraryFilters" class="flex flex-col gap-2 mb-4 md:mb-6 sm:flex-row sm:flex-wrap sm:items-center">
     {# Search — grows to fill available space on desktop #}
     <div class="relative sm:flex-1 sm:min-w-[180px]">
@@ -612,7 +636,7 @@ function toggleAddStories() {
              hx-get="/library/filter"
              hx-trigger="keyup changed delay:300ms"
              hx-target="#library-content"
-             hx-include="[name='category'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating']"
+             hx-include="[name='category'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
              style="height: 2.5rem; width: 100%"
              class="w-full h-10 px-4 pl-10 rounded-lg border border-slate-200 dark:border-gray-700
                     bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm
@@ -654,7 +678,7 @@ function toggleAddStories() {
                     hx-get="/library/filter"
                     hx-trigger="change"
                     hx-target="#library-content"
-                    hx-include="[name='search'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating']"
+                    hx-include="[name='search'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
                     class="w-full h-10 pl-3 pr-8 rounded-lg border border-slate-200 dark:border-gray-700
                            bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm
                            focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200">
@@ -673,7 +697,7 @@ function toggleAddStories() {
                     hx-get="/library/filter"
                     hx-trigger="change"
                     hx-target="#library-content"
-                    hx-include="[name='search'], [name='category'], [name='sort_by'], [name='sort_order'], [name='min_community_score'], [name='page_length'], [name='user_rating']"
+                    hx-include="[name='search'], [name='category'], [name='sort_by'], [name='sort_order'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
                     class="w-full h-10 pl-3 pr-8 rounded-lg border border-slate-200 dark:border-gray-700
                            bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm
                            focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
@@ -766,7 +790,7 @@ function toggleAddStories() {
                     hx-get="/library/filter"
                     hx-trigger="change"
                     hx-target="#library-content"
-                    hx-include="[name='search'], [name='category'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating']"
+                    hx-include="[name='search'], [name='category'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
                     class="w-full h-10 pl-3 pr-8 rounded-lg border border-slate-200 dark:border-gray-700
                            bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm
                            focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200">
@@ -779,6 +803,7 @@ function toggleAddStories() {
               <option value="rating">Rating</option>
               <option value="community_score">Community Score</option>
               <option value="last_opened">Last Opened</option>
+              <option value="queued">Date Queued</option>
             </select>
           </div>
           <div>
@@ -791,7 +816,7 @@ function toggleAddStories() {
                     hx-get="/library/filter"
                     hx-trigger="click"
                     hx-target="#library-content"
-                    hx-include="[name='search'], [name='category'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating']"
+                    hx-include="[name='search'], [name='category'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
                     class="w-full h-10 rounded-lg border border-slate-200 dark:border-gray-700
                            bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300
                            hover:bg-gray-50 dark:hover:bg-gray-700 transition-all duration-200
@@ -855,7 +880,7 @@ function toggleAddStories() {
   <div id="library" class="htmx-indicator:opacity-50 transition-opacity">
     <div id="library-content">
     <script>
-      if (localStorage.getItem('library_sort_by') || localStorage.getItem('library_category') || localStorage.getItem('library_source') || localStorage.getItem('library_sort_order')) {
+      if (localStorage.getItem('library_sort_by') || localStorage.getItem('library_category') || localStorage.getItem('library_source') || localStorage.getItem('library_sort_order') || localStorage.getItem('library_queue_only') === 'true') {
         document.getElementById('library-content').style.visibility = 'hidden';
       }
     </script>
@@ -886,6 +911,12 @@ function toggleAddStories() {
 {% endif %}
 
 <style>
+.library-view-tab { color: rgb(100 116 139); }
+.library-view-tab:hover { color: rgb(15 23 42); }
+.library-view-tab[aria-selected="true"] { background: #fff; color: rgb(15 23 42); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+[data-theme="dark"] .library-view-tab { color: rgb(156 163 175); }
+[data-theme="dark"] .library-view-tab:hover { color: #fff; }
+[data-theme="dark"] .library-view-tab[aria-selected="true"] { background: rgb(55 65 81); color: #fff; }
 #library.show-categories .story-category-label { display: block !important; }
 #library.show-page-length .story-page-length-label { display: block !important; }
 #library.show-user-rating .card-user-rating { display: inline-flex !important; }

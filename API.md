@@ -176,6 +176,37 @@ Enable or disable automatic update checking for a story.
 }
 ```
 
+## Reading Queue
+
+Add a story to, or remove it from, your reading queue — the "read next" list shown under **Library → Reading Queue**. (Not to be confused with the download queue above.)
+
+**Endpoint:** `POST /api/story/{story_id}/queue`
+
+**Request Body:**
+```json
+{
+  "in_queue": true,
+  "queued_at": "2026-11-20T09:30:00Z"
+}
+```
+
+- `in_queue` (required): boolean.
+- `queued_at` (optional): ISO 8601 timestamp to record as the time it was queued, e.g. when syncing from an offline client. Defaults to now. Ignored when `in_queue` is `false`.
+
+**Response:**
+```json
+{
+  "success": true,
+  "in_queue": true,
+  "queued_at": "2026-11-20T09:30:00",
+  "queue_count": 4
+}
+```
+
+`queue_count` is the total number of stories now in the queue. Stories are removed from the queue automatically when reading progress first reports them as completed (`is_completed: true` on `POST /epub/api/progress/{story_id}`).
+
+To list the queue, use `GET /library/filter?queue_only=true&sort_by=queued&sort_order=asc` (HTML), or read `in_queue` / `queued_at` on each story from `GET /api/library`.
+
 # iOS Shortcuts Integration
 
 You can use iOS Shortcuts to download stories directly from the share sheet.

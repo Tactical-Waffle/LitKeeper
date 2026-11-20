@@ -10,6 +10,9 @@ function initializeLibraryFilters() {
   const savedCategory = localStorage.getItem('library_category') || 'all';
   const savedSource = localStorage.getItem('library_source') || 'all';
   const savedSortOrder = localStorage.getItem('library_sort_order') || 'desc';
+  const savedQueueOnly = localStorage.getItem('library_queue_only') === 'true';
+
+  applyQueueViewUI(savedQueueOnly);
 
   if (sortBy) {
     sortBy.value = savedSortBy;
@@ -28,7 +31,8 @@ function initializeLibraryFilters() {
   const hasSavedPreferences = localStorage.getItem('library_sort_by') ||
                                localStorage.getItem('library_category') ||
                                localStorage.getItem('library_source') ||
-                               localStorage.getItem('library_sort_order');
+                               localStorage.getItem('library_sort_order') ||
+                               savedQueueOnly;
   
   if (hasSavedPreferences) {
     document.body.addEventListener('htmx:afterSwap', function onSwap(e) {
@@ -54,6 +58,63 @@ function updateSortOrderIcon(button, order) {
     if (label) label.textContent = 'Descending';
   }
 }
+
+// --- Reading queue view ---
+
+function isQueueViewActive() {
+  const input = document.getElementById('queueOnlyInput');
+  return !!input && input.value === 'true';
+}
+
+function applyQueueViewUI(queueOnly) {
+  const input = document.getElementById('queueOnlyInput');
+  if (input) input.value = queueOnly ? 'true' : 'false';
+  const allTab = document.getElementById('libraryViewAllTab');
+  const queueTab = document.getElementById('libraryViewQueueTab');
+  if (allTab) allTab.setAttribute('aria-selected', queueOnly ? 'false' : 'true');
+  if (queueTab) queueTab.setAttribute('aria-selected', queueOnly ? 'true' : 'false');
+}
+
+// Switching into the queue view orders it "up next" first (oldest queued at
+// the top); switching back restores whatever sort the library had before.
+window.setLibraryQueueView = function(queueOnly) {
+  if (isQueueViewActive() === queueOnly) return;
+
+  const sortBySelect = document.getElementById('sortBy');
+  const orderToggle = document.getElementById('sortOrderToggle');
+  let nextSortBy, nextSortOrder;
+
+  if (queueOnly) {
+    if (sortBySelect && orderToggle) {
+      localStorage.setItem('library_sort_before_queue', JSON.stringify({
+        sort_by: sortBySelect.value,
+        sort_order: orderToggle.value,
+      }));
+    }
+    nextSortBy = 'queued';
+    nextSortOrder = 'asc';
+  } else {
+    let prev = null;
+    try { prev = JSON.parse(localStorage.getItem('library_sort_before_queue') || 'null'); } catch (_) {}
+    localStorage.removeItem('library_sort_before_queue');
+    nextSortBy = (prev && prev.sort_by && prev.sort_by !== 'queued') ? prev.sort_by : 'date';
+    nextSortOrder = (prev && prev.sort_order) || 'desc';
+  }
+
+  if (sortBySelect) {
+    sortBySelect.value = nextSortBy;
+    localStorage.setItem('library_sort_by', nextSortBy);
+  }
+  if (orderToggle) {
+    orderToggle.value = nextSortOrder;
+    localStorage.setItem('library_sort_order', nextSortOrder);
+    updateSortOrderIcon(orderToggle, nextSortOrder);
+  }
+
+  localStorage.setItem('library_queue_only', queueOnly ? 'true' : 'false');
+  applyQueueViewUI(queueOnly);
+  refreshLibrary();
+};
 
 function triggerLibraryFilter() {
   const sortBy = document.getElementById('sortBy');

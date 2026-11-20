@@ -3,6 +3,7 @@ from flask import Blueprint, render_template, request, send_from_directory, json
 from flask.typing import ResponseReturnValue
 from app.models import Story
 from app.services import download_story_and_create_files, log_error, log_action, get_all_category_names, get_stories_page
+from app.services.library import get_queue_count
 from app.services.epub_service import EpubService
 from app.services.system_checks import check_mount_warning, check_legacy_mounts
 from app.utils import get_html_directory, get_epub_directory
@@ -52,7 +53,7 @@ def index() -> ResponseReturnValue:
                 f"/library/filter?{urlencode({'page': 2, 'sort_by': 'date', 'sort_order': 'desc', 'category': 'all', 'search': ''})}"
                 if has_more else None
             )
-            return render_template("index.html", stories=stories, categories=categories, error=error_msg, mount_warning=mount_warning, legacy_info=legacy_info, enable_library=enable_library, total_stories=total_stories, has_more=has_more, next_url=next_url, auto_watch_enabled=_get_auto_watch_enabled())
+            return render_template("index.html", stories=stories, categories=categories, error=error_msg, mount_warning=mount_warning, legacy_info=legacy_info, enable_library=enable_library, total_stories=total_stories, has_more=has_more, next_url=next_url, auto_watch_enabled=_get_auto_watch_enabled(), queue_count=get_queue_count() if enable_library else 0)
 
     enable_library = os.getenv('ENABLE_LIBRARY', 'true').lower() == 'true'
 
@@ -126,9 +127,11 @@ def index() -> ResponseReturnValue:
                     'auto_update_enabled': _s.auto_update_enabled,
                     'is_series': bool(_s.literotica_series_url and _s.chapter_count > 1),
                     'description': _s.description,
+                    'rating': _s.rating,
+                    'in_queue': bool(_s.in_queue),
                 }
 
-        return render_template("index.html", stories=stories, categories=categories, mount_warning=mount_warning, legacy_info=legacy_info, enable_library=enable_library, sync_status=sync_status, open_modal_story=open_modal_story, total_stories=total_stories, has_more=has_more, next_url=next_url, auto_watch_enabled=_get_auto_watch_enabled())
+        return render_template("index.html", stories=stories, categories=categories, mount_warning=mount_warning, legacy_info=legacy_info, enable_library=enable_library, sync_status=sync_status, open_modal_story=open_modal_story, total_stories=total_stories, has_more=has_more, next_url=next_url, auto_watch_enabled=_get_auto_watch_enabled(), queue_count=get_queue_count() if enable_library else 0)
     except Exception as e:
         log_error(f"Error loading index: {str(e)}\n{traceback.format_exc()}")
         return render_template("index.html", stories=[], categories=[], mount_warning={"show_warning": False}, legacy_info={"has_legacy_mounts": False}, enable_library=enable_library, total_stories=0, has_more=False, next_url=None, auto_watch_enabled=False)

@@ -52,6 +52,14 @@ class EpubService:
             if scroll_position is not None:
                 progress.scroll_position = scroll_position
             if is_completed is not None:
+                # Finishing a story takes it off the reading queue. Only on the
+                # transition to completed, so a client that re-sends
+                # is_completed=true on every save doesn't undo a re-queue.
+                if is_completed and not progress.is_completed:
+                    story = db.session.get(Story, story_id)
+                    if story is not None and story.in_queue:
+                        story.in_queue = False
+                        story.queued_at = None
                 progress.is_completed = is_completed
             if cfi is not None:
                 progress.cfi = cfi

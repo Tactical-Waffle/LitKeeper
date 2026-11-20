@@ -16,6 +16,7 @@ Originally built as a simple EPUB downloader for e-readers, LitKeeper has evolve
 * **Automated Series Bundling:** Detects if a story is part of a series, fetches all related parts, and compiles them into a single file. Both formats include a built-in table of contents for easy navigation.
 * **Auto-Updates & Notifications:** Receive alerts when downloads finish. LitKeeper can also check for new chapters and download updates automatically. *(Note: Update schedules are randomized in the code to prevent overwhelming source servers).*
 * **Responsive Design:** Enjoy a mobile-friendly UI that dynamically adapts with bottom navigation and optimized spacing for smaller screens.
+* **Reading Queue:** Save stories to read next with **Add to Queue** in any story's details, then switch the library to the **Reading Queue** view to see them oldest-first. Queued stories get a bookmark badge on their cover, and finishing a story takes it off the queue automatically.
 * **OPDS Catalog:** Expose your library as an OPDS feed for your e-reader device. Disabled by default; enable and optionally password-protect it under **Settings → OPDS Catalog**.
 
 ### Downloading

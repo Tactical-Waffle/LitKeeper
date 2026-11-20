@@ -21,6 +21,12 @@ def get_all_category_names() -> List[str]:
     return [r[0] for r in rows]
 
 
+def get_queue_count() -> int:
+    """Number of stories currently on the reading queue."""
+    from app.models import Story
+    return Story.query.filter(Story.in_queue == True).count()  # noqa: E712
+
+
 def get_stories_page(
     page: int = 1,
     per_page: int = 40,
@@ -150,6 +156,7 @@ def get_stories_page(
         'last_opened': Story.last_opened_at,
         'community_score': Story.literotica_score,
         'pages': Story.literotica_page_count,
+        'queued': Story.queued_at,
     }
     order_col = col_map.get(sort_by, Story.created_at)
     if sort_order == 'desc':

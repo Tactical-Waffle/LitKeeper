@@ -1165,9 +1165,12 @@ def toggle_story_queue(story_id: int) -> ResponseReturnValue:
         story.queued_at = None
     
     db.session.commit()
+    from app.services.library import get_queue_count
     return jsonify({
+        "success": True,
         "in_queue": story.in_queue,
-        "queued_at": story.queued_at.isoformat() if story.queued_at else None
+        "queued_at": story.queued_at.isoformat() if story.queued_at else None,
+        "queue_count": get_queue_count(),
     })
 
 
