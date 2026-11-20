@@ -581,7 +581,7 @@
   {% macro money(value) %}{{ '$%.2f'|format(value) if value >= 0.01 or not value else '$%.4f'|format(value) }}{% endmacro %}
   {% macro stats_head(extra='') %}<thead><tr><th scope="col"></th>{% for name, label in ai_stats.periods %}<th scope="col">{{ label }}</th>{% endfor %}{% if extra %}<th scope="col">{{ extra }}</th>{% endif %}</tr></thead>{% endmacro %}
   <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
-    <section id="aiStats" style="scroll-margin-top:5rem">
+    <section id="aiStats" class="text-gray-900 dark:text-gray-100" style="scroll-margin-top:5rem">
       <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
         <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -610,6 +610,10 @@
     .ai-stats th,.ai-stats td{padding:.3rem .6rem;border-bottom:1px solid #94a3b833;white-space:nowrap}.ai-stats thead th{font-size:.75rem;font-weight:600;opacity:.75;text-align:right}
     .ai-stats td{text-align:right;font-variant-numeric:tabular-nums}.ai-stats tbody th{text-align:left;font-weight:500}.ai-stats-total th,.ai-stats-total td{font-weight:650;border-bottom:0}
     .ai-stats-more{margin-top:.8rem}.ai-stats-more summary{cursor:pointer;font-weight:600;font-size:.9rem}
+    /* Text colours for both themes: the tables and headings have none of their own otherwise. */
+    .ai-stats thead th{color:rgb(75 85 99)}[data-theme="dark"] .ai-stats thead th{color:rgb(156 163 175)}
+    .ai-stats tbody th,.ai-stats td,.ai-stats-more summary{color:rgb(17 24 39)}
+    [data-theme="dark"] .ai-stats tbody th,[data-theme="dark"] .ai-stats td,[data-theme="dark"] .ai-stats-more summary{color:rgb(243 244 246)}
   </style>
 
   <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
