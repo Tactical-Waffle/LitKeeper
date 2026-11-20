@@ -54,6 +54,7 @@ DEFAULTS = {
 }
 
 _queue: deque = deque()
+_queued_at: dict = {}   # story id -> when it joined the queue (ISO time)
 _running: dict = {}
 _lock = threading.Lock()
 
@@ -572,6 +573,58 @@ def make_cover(story_id: int) -> None:
 
 # --- Background worker ----------------------------------------------------------------------
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def cancel(story_id: int) -> bool:
+    """Take a waiting cover out of the queue. A cover already being made can't be stopped."""
+    with _lock:
+        if story_id not in _queue:
+            return False
+        _queue.remove(story_id)
+        _queued_at.pop(story_id, None)
+    log_action(f'AI cover for story {story_id} cancelled before it started')
+    return True
+
+
+def recent_results(limit: int = 15) -> list[dict]:
+    """The latest finished and failed covers, newest first, read from each story's notes file
+    (so the list survives restarts). Each: story_id, ok, when, cost, error, image_model."""
+    import glob
+    from app.utils import get_cover_directory
+    from .cover_generator import ai_art_paths
+    folder = os.path.dirname(ai_art_paths(get_cover_directory(), 'x')[1])
+    results = []
+    for path in glob.glob(os.path.join(glob.escape(folder), '*.art.json')):
+        try:
+            story_id = int(os.path.basename(path).split('_', 1)[0])
+            with open(path, encoding='utf-8') as handle:
+                notes = json.load(handle)
+        except (ValueError, OSError):
+            continue
+        if not isinstance(notes, dict):
+            continue
+        failed = bool(notes.get('error'))
+        when = (notes.get('failed') if failed else notes.get('made')) or \
+            datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).isoformat()
+        results.append({'story_id': story_id, 'ok': not failed, 'when': when, 'cost': notes.get('cost'),
+                        'error': notes.get('error', ''), 'image_model': notes.get('image_model', '')})
+    results.sort(key=lambda r: r['when'], reverse=True)
+    return results[:limit]
+
+
+def queue_overview() -> dict:
+    """What the Queue page shows: the cover being made now, the ones waiting in order, and recent results."""
+    with _lock:
+        running = None
+        if _running.get('story_id') is not None:
+            running = {'story_id': _running['story_id'], 'progress': _running.get('progress', ''),
+                       'started': _running.get('started', '')}
+        waiting = [{'story_id': i, 'queued_at': _queued_at.get(i, '')} for i in _queue]
+    return {'running': running, 'waiting': waiting, 'recent': recent_results()}
+
+
 def start(app, story_id: int) -> str:
     """Queue a cover for the story; returns 'started' or 'queued'."""
     with _lock:
@@ -580,6 +633,7 @@ def start(app, story_id: int) -> str:
         if story_id in _queue:
             return 'queued'
         _queue.append(story_id)
+        _queued_at[story_id] = _now()
         if _running.get('working'):
             return 'queued'
         _running['working'] = True
@@ -615,7 +669,8 @@ def _work(app) -> None:
                 _running['working'] = False
                 return
             story_id = _queue.popleft()
-            _running['story_id'], _running['progress'] = story_id, 'Starting'
+            _queued_at.pop(story_id, None)
+            _running['story_id'], _running['progress'], _running['started'] = story_id, 'Starting', _now()
         try:
             with app.app_context():
                 make_cover(story_id)
@@ -629,7 +684,7 @@ def _work(app) -> None:
                     from .notifier import send_notification
                     story = db.session.get(Story, story_id)
                     if story:
-                        _write_notes(story, {**_read_notes(story), 'error': message})
+                        _write_notes(story, {**_read_notes(story), 'error': message, 'failed': _now()})
                         send_notification(f'AI cover failed for "{story.title}": {message}', is_error=True)
             except Exception as e:
                 log_error(f'Could not record the AI cover failure for story {story_id}: {e}')
@@ -637,3 +692,4 @@ def _work(app) -> None:
             with _lock:
                 _running.pop('story_id', None)
                 _running.pop('progress', None)
+                _running.pop('started', None)

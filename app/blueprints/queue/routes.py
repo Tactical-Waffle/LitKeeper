@@ -30,7 +30,8 @@ def index() -> ResponseReturnValue:
                            completed=DownloadQueueItem.query.filter_by(status='completed').count(),
                            failed=DownloadQueueItem.query.filter_by(status='failed').count(),
                            rate_limited=rate_limited_count,
-                           queue_items=[i.to_dict() for i in all_items])
+                           queue_items=[i.to_dict() for i in all_items],
+                           ai=_ai_cover_queue())
 
 @queue.route('/api/items')
 def get_queue_items() -> ResponseReturnValue:
@@ -105,6 +106,68 @@ def queue_list_partial() -> ResponseReturnValue:
     except Exception as e:
         log_error(f"Error rendering queue list: {str(e)}")
         return '<div class="text-red-600 dark:text-red-400">Error loading queue</div>', 500
+
+
+def _ago(iso: str) -> str:
+    """'just now', '5 min ago', '3 h ago', '2 days ago' for an ISO time; '' if unknown."""
+    from datetime import datetime, timezone
+    try:
+        then = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return ''
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    seconds = (datetime.now(timezone.utc) - then).total_seconds()
+    if seconds < 60:
+        return 'just now'
+    if seconds < 3600:
+        return f'{int(seconds // 60)} min ago'
+    if seconds < 86400:
+        return f'{int(seconds // 3600)} h ago'
+    days = int(seconds // 86400)
+    return f'{days} day{"s" if days != 1 else ""} ago'
+
+
+def _ai_cover_queue() -> dict:
+    """The AI cover queue with story titles filled in, for the Queue page."""
+    from app.models import Story
+    from app.services import ai_cover
+    overview = ai_cover.queue_overview()
+    ids = {r['story_id'] for r in overview['waiting'] + overview['recent']}
+    if overview['running']:
+        ids.add(overview['running']['story_id'])
+    stories = {s.id: s for s in Story.query.filter(Story.id.in_(ids)).all()} if ids else {}
+
+    def described(entry: dict) -> dict:
+        story = stories.get(entry['story_id'])
+        when = entry.get('started') or entry.get('queued_at') or entry.get('when') or ''
+        return {**entry, 'title': story.title if story else f"Story {entry['story_id']} (deleted)",
+                'author': story.author.name if story and story.author else '', 'ago': _ago(when)}
+
+    running = described(overview['running']) if overview['running'] else None
+    waiting = [described(e) for e in overview['waiting']]
+    recent = [described(e) for e in overview['recent'] if e['story_id'] in stories]
+    return {'running': running, 'waiting': waiting, 'recent': recent,
+            'configured': bool(ai_cover.settings()['api_key'])}
+
+
+@queue.route('/partials/ai-covers')
+def ai_covers_partial() -> ResponseReturnValue:
+    """HTMX partial: the AI cover queue."""
+    try:
+        return render_template('queue/partials/ai_covers.html', ai=_ai_cover_queue())
+    except Exception as e:
+        log_error(f"Error rendering the AI cover queue: {str(e)}")
+        return '<div class="text-red-600 dark:text-red-400 text-sm">Error loading AI covers</div>', 500
+
+
+@queue.route('/api/ai-covers/<int:story_id>', methods=['DELETE'])
+def cancel_ai_cover(story_id: int) -> ResponseReturnValue:
+    """Take a waiting AI cover out of the queue."""
+    from app.services import ai_cover
+    if ai_cover.cancel(story_id):
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'That cover is not waiting any more.'}), 409
 
 
 @queue.route('/api/items/<int:item_id>', methods=['DELETE'])

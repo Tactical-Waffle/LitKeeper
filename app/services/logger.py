@@ -125,8 +125,9 @@ def tail_log(name: str, count: int = 500) -> list[str]:
 
 
 def is_api_path(path: str) -> bool:
-    """Requests counted as API calls: the JSON API, the reader's API, the queue's API and the OPDS feed."""
-    return path.startswith(('/api/', '/epub/api/', '/queue/api/', '/opds'))
+    """Requests counted as API calls: the JSON API, the reader's API, the queue's API and its
+    every-few-seconds status updates, and the OPDS feed."""
+    return path.startswith(('/api/', '/epub/api/', '/queue/api/', '/queue/partials/', '/opds'))
 
 
 def log_request(method: str, path: str, status: int, duration_ms: float, client: Optional[str]) -> None:

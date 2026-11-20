@@ -106,6 +106,13 @@
       </div>
     </div>
 
+    <div id="aiCoverQueue"
+         hx-get="/queue/partials/ai-covers"
+         hx-trigger="every 3s"
+         hx-swap="innerHTML">
+      {% include 'queue/partials/ai_covers.html' %}
+    </div>
+
     <div id="queueList"
          hx-get="/queue/partials/list"
          hx-trigger="every 2s"
@@ -133,6 +140,17 @@
     } catch {
       window.toast?.show('Request failed', 'error');
     }
+  }
+
+  async function cancelAiCover(storyId) {
+    try {
+      const res = await fetch(`/queue/api/ai-covers/${storyId}`, { method: 'DELETE' });
+      const data = await res.json();
+      window.toast?.show(data.success ? 'AI cover cancelled' : (data.message || 'Could not cancel'), data.success ? 'success' : 'error');
+    } catch {
+      window.toast?.show('Request failed', 'error');
+    }
+    htmx.ajax('GET', '/queue/partials/ai-covers', { target: '#aiCoverQueue', swap: 'innerHTML' });
   }
 
   async function clearHistory() {
