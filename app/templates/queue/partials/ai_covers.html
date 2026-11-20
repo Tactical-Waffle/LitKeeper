@@ -9,20 +9,20 @@
       AI Covers
     </h3>
     <p class="text-xs text-gray-500 dark:text-gray-400">
-      {% if ai.running %}1 in progress{% else %}Nothing in progress{% endif %} · {{ ai.waiting|length }} waiting
+      {% if ai.running %}{{ ai.running|length }} in progress{% else %}Nothing in progress{% endif %} · {{ ai.waiting|length }} waiting{% if ai.running or ai.waiting %} · {{ ai.parallel }} at a time{% endif %}
     </p>
   </div>
 
   <div class="divide-y divide-slate-100 dark:divide-slate-700/50">
-    {% if ai.running %}
+    {% for item in ai.running %}
     <div class="flex items-start gap-3 py-3" data-ai-cover-state="running">
       <div class="flex-shrink-0 mt-0.5 animate-spin rounded-full h-5 w-5 border-2 border-amber-200 dark:border-amber-800 border-t-amber-600 dark:border-t-amber-400"></div>
       <div class="min-w-0 flex-1">
-        <p class="font-semibold text-gray-900 dark:text-white truncate text-sm">{{ ai.running.title }}</p>
-        <p class="text-sm text-amber-700 dark:text-amber-400 mt-0.5">{{ ai.running.progress or 'Working' }}{% if ai.running.ago %} <span class="text-gray-500 dark:text-gray-400">· started {{ ai.running.ago }}</span>{% endif %}</p>
+        <p class="font-semibold text-gray-900 dark:text-white truncate text-sm">{{ item.title }}</p>
+        <p class="text-sm text-amber-700 dark:text-amber-400 mt-0.5">{{ item.progress or 'Working' }}{% if item.ago %} <span class="text-gray-500 dark:text-gray-400">· started {{ item.ago }}</span>{% endif %}</p>
       </div>
     </div>
-    {% endif %}
+    {% endfor %}
 
     {% for item in ai.waiting %}
     <div class="flex items-start gap-3 py-3" data-ai-cover-state="waiting">

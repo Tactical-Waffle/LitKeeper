@@ -289,8 +289,9 @@ class TestMakeCover:
             ai_cover.save_settings({'api_key': API_KEY})
         with patch.object(ai_cover, 'make_cover', side_effect=ValueError('The image model returned no picture.')), \
              patch('app.services.notifier.send_notification') as notify:
-            ai_cover._queue.append(story)
-            ai_cover._running['working'] = True
+            with ai_cover._lock:
+                ai_cover._queue.append(story)
+                ai_cover._workers += 1
             ai_cover._work(app)
         with app.app_context():
             assert ai_cover.info(_get_story(story))['error'] == 'The image model returned no picture.'

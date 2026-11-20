@@ -50,13 +50,16 @@ def stories(app: Flask):
 @pytest.fixture
 def queue_state():
     """Set the in-memory queue by hand (no worker thread), and empty it again afterwards."""
-    def set_state(running=None, progress='', waiting=()):
+    def set_state(running=(), progress='', waiting=()):
+        if isinstance(running, int):
+            running = [running]
         with ai_cover._lock:
             ai_cover._queue.clear()
             ai_cover._queued_at.clear()
-            ai_cover._running.clear()
-            if running is not None:
-                ai_cover._running.update({'story_id': running, 'progress': progress, 'started': ai_cover._now()})
+            ai_cover._active.clear()
+            ai_cover._workers = 0
+            for story_id in running:
+                ai_cover._active[story_id] = {'progress': progress, 'started': ai_cover._now()}
             for story_id in waiting:
                 ai_cover._queue.append(story_id)
                 ai_cover._queued_at[story_id] = ai_cover._now()
@@ -78,8 +81,8 @@ class TestAiCoverQueue:
         queue_state(running=stories[0], progress='Painting the cover', waiting=[stories[2], stories[1]])
         with app.app_context():
             overview = ai_cover.queue_overview()
-        assert overview['running']['story_id'] == stories[0]
-        assert overview['running']['progress'] == 'Painting the cover'
+        assert [r['story_id'] for r in overview['running']] == [stories[0]]
+        assert overview['running'][0]['progress'] == 'Painting the cover'
         assert [w['story_id'] for w in overview['waiting']] == [stories[2], stories[1]]
 
     def test_cancel_waiting_cover(self, client: FlaskClient, stories, covers, queue_state) -> None:
@@ -110,7 +113,7 @@ class TestAiCoverQueue:
         assert 'data-ai-cover-state="waiting"' in html and f'cancelAiCover({stories[1]})' in html
         assert 'Done · $0.042 · just now' in html
         assert 'The image model refused.' in html
-        assert '1 in progress · 1 waiting' in html
+        assert '1 in progress · 1 waiting · 3 at a time' in html
         page = client.get('/queue/').get_data(as_text=True)
         assert 'id="aiCoverQueue"' in page and 'Queue Story 0' in page
 
@@ -133,9 +136,9 @@ class TestAiCoverQueue:
             with ai_cover._lock:
                 ai_cover._queue.append(stories[0])
                 ai_cover._queued_at[stories[0]] = ai_cover._now()
-                ai_cover._running['working'] = True
+                ai_cover._workers += 1
             ai_cover._work(app)
-        assert stories[0] not in ai_cover._queued_at and 'started' not in ai_cover._running
+        assert stories[0] not in ai_cover._queued_at and not ai_cover._active and ai_cover._workers == 0
         with app.app_context():
             recent = ai_cover.recent_results()
         assert recent[0]['story_id'] == stories[0] and recent[0]['error'] == 'No credit left.'
@@ -145,3 +148,84 @@ class TestAiCoverQueue:
         from app.services.logger import is_api_path
         assert is_api_path('/queue/partials/ai-covers') and is_api_path('/queue/partials/list')
         assert not is_api_path('/queue/')
+
+
+@pytest.mark.integration
+class TestSeveralAtOnce:
+
+    def _run_batch(self, app: Flask, story_ids, limit):
+        """Queue covers with make_cover replaced by one that waits until released, and record
+        the most covers that were being made at the same moment."""
+        import threading, time
+        release = threading.Event()
+        lock = threading.Lock()
+        seen = {'now': 0, 'most': 0, 'done': 0}
+
+        def fake_make_cover(story_id):
+            ai_cover._set_progress('Painting the cover')
+            with lock:
+                seen['now'] += 1
+                seen['most'] = max(seen['most'], seen['now'])
+            release.wait(5)
+            with lock:
+                seen['now'] -= 1
+                seen['done'] += 1
+
+        with patch.object(ai_cover, 'make_cover', side_effect=fake_make_cover):
+            with app.app_context():
+                states = [ai_cover.start(app, i, limit=limit) for i in story_ids]
+            deadline = time.time() + 5
+            while time.time() < deadline and len(ai_cover._active) < min(limit, len(story_ids)):
+                time.sleep(0.02)
+            snapshot = {i: dict(a) for i, a in ai_cover._active.items()}
+            waiting = list(ai_cover._queue)
+            release.set()
+            while time.time() < deadline and (ai_cover._workers or ai_cover._active):
+                time.sleep(0.02)
+        return states, seen, snapshot, waiting
+
+    def test_makes_several_at_once(self, app: Flask, stories, covers, queue_state) -> None:
+        queue_state()
+        states, seen, snapshot, waiting = self._run_batch(app, stories, limit=3)
+        assert states == ['started', 'started', 'started', 'queued']
+        assert seen['most'] == 3 and seen['done'] == 4
+        assert len(snapshot) == 3 and waiting == [stories[3]]
+        # Each worker reports progress for its own story.
+        assert all(a['progress'] == 'Painting the cover' for a in snapshot.values())
+        assert ai_cover._workers == 0 and not ai_cover._active
+
+    def test_one_at_a_time_when_set_to_1(self, app: Flask, stories, covers, queue_state) -> None:
+        queue_state()
+        states, seen, _, waiting = self._run_batch(app, stories[:3], limit=1)
+        assert states == ['started', 'queued', 'queued']
+        assert seen['most'] == 1 and seen['done'] == 3
+
+    def test_same_story_twice_is_refused_while_running(self, app: Flask, stories, queue_state) -> None:
+        queue_state(running=stories[0])
+        with pytest.raises(ValueError):
+            ai_cover.start(app, stories[0], limit=3)
+
+    @pytest.mark.parametrize('value, ok', [(1, True), (5, True), ('3', True), (0, False), (6, False), ('lots', False)])
+    def test_setting_is_checked(self, app: Flask, value, ok) -> None:
+        from app.models import AppConfig, db
+        with app.app_context():
+            try:
+                if ok:
+                    assert ai_cover.save_settings({'parallel': value})['parallel'] == int(value)
+                    assert ai_cover.parallel_limit() == int(value)
+                else:
+                    with pytest.raises(ValueError):
+                        ai_cover.save_settings({'parallel': value})
+            finally:
+                AppConfig.query.filter_by(key=ai_cover.KEY).delete()
+                db.session.commit()
+
+    def test_default_is_three(self, app: Flask) -> None:
+        with app.app_context():
+            assert ai_cover.DEFAULTS['parallel'] == 3
+            with patch.object(ai_cover, 'settings', return_value=dict(ai_cover.DEFAULTS)):
+                assert ai_cover.parallel_limit() == 3
+
+    def test_settings_page_has_the_choice(self, client: FlaskClient) -> None:
+        page = client.get('/settings/').get_data(as_text=True)
+        assert 'id="aiCoverParallel"' in page and '<option value="5"' in page

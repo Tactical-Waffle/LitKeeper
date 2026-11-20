@@ -55,6 +55,7 @@ def index() -> ResponseReturnValue:
         ai_cover_settings=ai_cover.public_settings(),
         ai_cover_story_text=ai_cover.STORY_TEXT,
         ai_cover_lettering=ai_cover.LETTERING,
+        ai_cover_parallel_max=ai_cover.PARALLEL_MAX,
         ai_cover_prompts=ai_prompts.overview(),
         log_files=_log_file_list(),
         log_retention_days=_log_retention_days(),

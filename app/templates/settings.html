@@ -423,6 +423,17 @@
           </div>
         </div>
 
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverParallel">Covers made at the same time</label>
+          <select id="aiCoverParallel"
+            class="w-32 px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+            {% for n in range(1, ai_cover_parallel_max + 1) %}
+            <option value="{{ n }}" {{ 'selected' if ai_cover_settings.parallel == n else '' }}>{{ n }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">When you ask for several covers, this many are made side by side. It's faster but costs the same. Lower it if OpenRouter starts refusing with "too many requests".</p>
+        </div>
+
         <div class="space-y-2 pt-1">
           <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
             <input type="checkbox" id="aiCoverAuto" {{ 'checked' if ai_cover_settings.auto else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
@@ -840,6 +851,7 @@
       auto: document.getElementById('aiCoverAuto').checked,
       retry_unlettered: document.getElementById('aiCoverRetryUnlettered').checked,
       retry_softer: document.getElementById('aiCoverRetrySofter').checked,
+      parallel: document.getElementById('aiCoverParallel').value,
     };
     const data = await withBusy(button, 'Saving...', () => aiCoverRequest('/settings/ai-covers', body));
     if (!data.success) { showToast(data.message || 'Error saving AI cover settings', 'error'); return; }

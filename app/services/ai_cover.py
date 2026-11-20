@@ -51,11 +51,15 @@ LETTERING = {
 DEFAULTS = {
     'api_key': '', 'text_model': DEFAULT_TEXT_MODEL, 'image_model': DEFAULT_IMAGE_MODEL, 'fallback_models': [],
     'auto': False, 'story_text': 'excerpts', 'lettering': 'image', 'retry_unlettered': True, 'retry_softer': True,
+    'parallel': 3,
 }
+PARALLEL_MAX = 5   # covers made at the same time; OpenRouter's rate limits make more pointless
 
 _queue: deque = deque()
 _queued_at: dict = {}   # story id -> when it joined the queue (ISO time)
-_running: dict = {}
+_active: dict = {}      # story id -> {'progress': text, 'started': ISO time} for covers being made now
+_workers = 0            # worker threads running; each makes one cover at a time
+_current = threading.local()  # which story this worker thread is making, for progress updates
 _lock = threading.Lock()
 
 
@@ -109,6 +113,14 @@ def save_settings(form: dict) -> dict:
             if len(name) > 120 or not MODEL_NAME.fullmatch(name):
                 raise ValueError(f'"{name}" is not an OpenRouter model name (for example {default}).')
             new[field] = name
+    if 'parallel' in form:
+        try:
+            parallel = int(form.get('parallel'))
+        except (TypeError, ValueError):
+            raise ValueError('Covers at a time must be a whole number.')
+        if not 1 <= parallel <= PARALLEL_MAX:
+            raise ValueError(f'Covers at a time must be from 1 to {PARALLEL_MAX}.')
+        new['parallel'] = parallel
     if 'fallback_models' in form:
         new['fallback_models'] = _model_names(form.get('fallback_models'), 'fallback image models', 5)
     if form.get('story_text') in STORY_TEXT:
@@ -167,8 +179,8 @@ def info(story) -> dict:
     art, _ = art_paths(story)
     notes = _read_notes(story)
     with _lock:
-        running = _running.get('story_id') == story.id
-        progress = _running.get('progress', '') if running else ''
+        running = story.id in _active
+        progress = _active[story.id].get('progress', '') if running else ''
         queued = story.id in _queue
     return {
         'has_art': os.path.exists(art),
@@ -410,8 +422,10 @@ def story_details(story, amount: Optional[str] = None) -> str:
 # --- Making a cover -------------------------------------------------------------------------
 
 def _set_progress(text: str) -> None:
+    story_id = getattr(_current, 'story_id', None)
     with _lock:
-        _running['progress'] = text
+        if story_id in _active:
+            _active[story_id]['progress'] = text
 
 
 def write_brief(story, api_key: str, model: str) -> tuple[str, float]:
@@ -615,28 +629,39 @@ def recent_results(limit: int = 15) -> list[dict]:
 
 
 def queue_overview() -> dict:
-    """What the Queue page shows: the cover being made now, the ones waiting in order, and recent results."""
+    """What the Queue page shows: the covers being made now, the ones waiting in order, and recent results."""
     with _lock:
-        running = None
-        if _running.get('story_id') is not None:
-            running = {'story_id': _running['story_id'], 'progress': _running.get('progress', ''),
-                       'started': _running.get('started', '')}
+        running = sorted(({'story_id': i, 'progress': a.get('progress', ''), 'started': a.get('started', '')}
+                          for i, a in _active.items()), key=lambda r: r['started'])
         waiting = [{'story_id': i, 'queued_at': _queued_at.get(i, '')} for i in _queue]
     return {'running': running, 'waiting': waiting, 'recent': recent_results()}
 
 
-def start(app, story_id: int) -> str:
-    """Queue a cover for the story; returns 'started' or 'queued'."""
+def parallel_limit() -> int:
+    """How many covers to make at the same time (Settings → AI Covers). Needs an app context."""
+    try:
+        value = int(settings().get('parallel', DEFAULTS['parallel']))
+    except Exception:
+        value = DEFAULTS['parallel']
+    return max(1, min(PARALLEL_MAX, value))
+
+
+def start(app, story_id: int, limit: Optional[int] = None) -> str:
+    """Queue a cover for the story; returns 'started' or 'queued'. Up to `limit` covers
+    (default: the Settings value) are made at the same time, each in its own worker thread."""
+    global _workers
+    if limit is None:
+        limit = parallel_limit()
     with _lock:
-        if _running.get('story_id') == story_id:
+        if story_id in _active:
             raise ValueError('A cover for this story is already being made.')
         if story_id in _queue:
             return 'queued'
         _queue.append(story_id)
         _queued_at[story_id] = _now()
-        if _running.get('working'):
+        if _workers >= limit:
             return 'queued'
-        _running['working'] = True
+        _workers += 1
     threading.Thread(target=_work, args=(app,), daemon=True, name='AICovers').start()
     return 'started'
 
@@ -662,15 +687,25 @@ def make_after_download(app, story_id: Optional[int]) -> None:
 
 
 def _work(app) -> None:
+    """One worker: makes covers from the queue one after another until it's empty.
+    Several of these run side by side (see start)."""
+    global _workers
     while True:
+        try:
+            with app.app_context():
+                limit = parallel_limit()
+        except Exception:
+            limit = DEFAULTS['parallel']
         with _lock:
-            if not _queue:
-                _running.pop('story_id', None)
-                _running['working'] = False
+            # Stop when the queue is empty, or when there are more workers than the
+            # Settings value now allows (it was lowered while covers were being made).
+            if not _queue or _workers > limit:
+                _workers -= 1
                 return
             story_id = _queue.popleft()
             _queued_at.pop(story_id, None)
-            _running['story_id'], _running['progress'], _running['started'] = story_id, 'Starting', _now()
+            _active[story_id] = {'progress': 'Starting', 'started': _now()}
+        _current.story_id = story_id
         try:
             with app.app_context():
                 make_cover(story_id)
@@ -689,7 +724,6 @@ def _work(app) -> None:
             except Exception as e:
                 log_error(f'Could not record the AI cover failure for story {story_id}: {e}')
         finally:
+            _current.story_id = None
             with _lock:
-                _running.pop('story_id', None)
-                _running.pop('progress', None)
-                _running.pop('started', None)
+                _active.pop(story_id, None)

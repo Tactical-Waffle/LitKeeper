@@ -133,9 +133,7 @@ def _ai_cover_queue() -> dict:
     from app.models import Story
     from app.services import ai_cover
     overview = ai_cover.queue_overview()
-    ids = {r['story_id'] for r in overview['waiting'] + overview['recent']}
-    if overview['running']:
-        ids.add(overview['running']['story_id'])
+    ids = {r['story_id'] for r in overview['running'] + overview['waiting'] + overview['recent']}
     stories = {s.id: s for s in Story.query.filter(Story.id.in_(ids)).all()} if ids else {}
 
     def described(entry: dict) -> dict:
@@ -144,11 +142,11 @@ def _ai_cover_queue() -> dict:
         return {**entry, 'title': story.title if story else f"Story {entry['story_id']} (deleted)",
                 'author': story.author.name if story and story.author else '', 'ago': _ago(when)}
 
-    running = described(overview['running']) if overview['running'] else None
+    running = [described(e) for e in overview['running']]
     waiting = [described(e) for e in overview['waiting']]
     recent = [described(e) for e in overview['recent'] if e['story_id'] in stories]
     return {'running': running, 'waiting': waiting, 'recent': recent,
-            'configured': bool(ai_cover.settings()['api_key'])}
+            'configured': bool(ai_cover.settings()['api_key']), 'parallel': ai_cover.parallel_limit()}
 
 
 @queue.route('/partials/ai-covers')
