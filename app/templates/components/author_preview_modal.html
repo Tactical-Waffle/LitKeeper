@@ -1,13 +1,13 @@
 <div id="authorPreviewModal" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onclick="closeAuthorPreviewModal()">
-  <div class="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+  <div class="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
 
     <!-- Header -->
     <div class="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700 flex-shrink-0">
-      <div>
-        <h3 class="text-lg font-semibold text-slate-900 dark:text-white" id="authorPreviewTitle">Author Stories</h3>
+      <div class="min-w-0">
+        <h3 class="text-lg font-semibold text-slate-900 dark:text-white truncate" id="authorPreviewTitle">Author Stories</h3>
         <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5" id="authorPreviewSubtitle"></p>
       </div>
-      <button onclick="closeAuthorPreviewModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors ml-4 flex-shrink-0">
+      <button onclick="closeAuthorPreviewModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors ml-4 flex-shrink-0" aria-label="Close">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
         </svg>
@@ -39,23 +39,39 @@
       <!-- Results state -->
       <div id="authorPreviewResults" class="hidden flex flex-col flex-1 min-h-0">
 
-        <!-- Toolbar -->
-        <div class="flex items-center gap-3 px-6 py-3 border-b border-slate-100 dark:border-slate-700 flex-shrink-0">
-          <span class="text-xs text-slate-500 dark:text-slate-400">Sort by</span>
-          <div class="flex rounded-md overflow-hidden border border-slate-200 dark:border-slate-600 text-xs font-medium">
-            <button onclick="setSortField('score')" id="sort-field-score"
-              class="px-3 py-1.5 transition-colors bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900">
-              Rating
-            </button>
-            <button onclick="setSortField('date')" id="sort-field-date"
-              class="px-3 py-1.5 transition-colors border-l border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600">
-              Date
+        <!-- Toolbar: sort, then selection and filter -->
+        <div class="px-5 sm:px-6 py-3 border-b border-slate-100 dark:border-slate-700 flex-shrink-0 space-y-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <label for="authorSortField" class="text-xs text-slate-500 dark:text-slate-400">Sort by</label>
+            <select id="authorSortField" onchange="setSortField(this.value)"
+              class="h-8 pl-2 pr-7 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200">
+              <option value="date">Date</option>
+              <option value="rating">Rating</option>
+              <option value="views">Reads</option>
+              <option value="favorites">Favorites</option>
+              <option value="saves">Saves (reading lists)</option>
+              <option value="comments">Comments</option>
+              <option value="words">Length</option>
+              <option value="title">Title</option>
+            </select>
+            <button onclick="toggleSortDir()" id="sort-dir-btn"
+              class="h-8 px-3 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
+              ↓ Newest first
             </button>
           </div>
-          <button onclick="toggleSortDir()" id="sort-dir-btn"
-            class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
-            ↓ Newest first
-          </button>
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <button type="button" onclick="authorSelectAll(true)" class="author-tool-btn">Select all</button>
+            <button type="button" onclick="authorSelectAll(false)" class="author-tool-btn">Select none</button>
+            <span class="hidden sm:inline text-slate-300 dark:text-slate-600">|</span>
+            <span id="authorFilterControls" class="hidden flex-wrap items-center gap-2">
+              <span class="text-slate-500 dark:text-slate-400">Filter:</span>
+              <button type="button" onclick="authorSelectMatches(true)" class="author-tool-btn">Select matches</button>
+              <button type="button" onclick="authorSelectMatches(false)" class="author-tool-btn">Deselect matches</button>
+              <span id="authorFilterInfo" class="text-slate-500 dark:text-slate-400"></span>
+            </span>
+            <a id="authorFilterSetup" href="/settings#storyFilterSection" hx-boost="false"
+               class="hidden text-slate-500 dark:text-slate-400 underline hover:text-slate-700 dark:hover:text-slate-200">Set up filter terms</a>
+          </div>
         </div>
 
         <!-- Story list -->
@@ -66,9 +82,9 @@
     </div>
 
     <!-- Footer -->
-    <div id="authorPreviewFooter" class="hidden flex-shrink-0 border-t border-slate-200 dark:border-slate-700 px-6 py-4 flex items-center gap-3">
+    <div id="authorPreviewFooter" class="hidden flex-shrink-0 border-t border-slate-200 dark:border-slate-700 px-5 sm:px-6 py-4 flex flex-wrap items-center gap-3">
       {% if auto_watch_enabled %}
-      <!-- Shown alongside Add All when pending stories exist -->
+      <!-- Shown while there are stories left to add -->
       <label id="authorWatchLabel" class="hidden items-center gap-2 cursor-pointer select-none">
         <input type="checkbox" id="authorWatchCheckbox" checked
           class="h-4 w-4 rounded border-slate-300 dark:border-slate-500 text-green-600 focus:ring-green-500 focus:ring-offset-0 cursor-pointer">
@@ -88,8 +104,9 @@
       </label>
       {% endif %}
       <div class="ml-auto flex items-center gap-3">
-        <button id="addAllStoriesBtn" onclick="addAllStories()" class="hidden px-4 py-2 text-sm font-semibold rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-slate-300 transition-all duration-200">
-          Add All
+        <span id="authorSelectedCount" class="text-sm text-slate-500 dark:text-slate-400"></span>
+        <button id="addAllStoriesBtn" onclick="addSelectedStories()" class="hidden px-4 py-2 text-sm font-semibold rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200">
+          Add Selected
         </button>
         <button onclick="closeAuthorPreviewModal()" class="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 transition-all duration-200">
           Close
@@ -100,19 +117,46 @@
   </div>
 </div>
 
+<style>
+  .author-tool-btn {
+    padding: 0.25rem 0.6rem; border-radius: 0.375rem; font-weight: 500;
+    border: 1px solid rgb(226 232 240); background: #fff; color: rgb(71 85 105);
+  }
+  .author-tool-btn:hover { background: rgb(248 250 252); }
+  [data-theme="dark"] .author-tool-btn { border-color: rgb(71 85 105); background: rgb(51 65 85); color: rgb(226 232 240); }
+  [data-theme="dark"] .author-tool-btn:hover { background: rgb(71 85 105); }
+  .author-check { width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer; accent-color: #498EDC; }
+  .author-check:disabled { cursor: not-allowed; opacity: .4; }
+  .author-caret { transition: transform .15s; }
+  .author-caret[aria-expanded="true"] { transform: rotate(90deg); }
+</style>
+
 <script>
-let _authorPreviewUrl = null;
-let _authorPreviewStories = [];
-let _authorPreviewSort = { field: 'score', dir: 'desc' };
-let _authorId = null;
-let _authorWatched = false;
+// The author window: every story and series an author has published on Literotica, with
+// checkboxes. Series hold their parts (collapsed); ticking a series ticks all its parts.
+var _authorPreviewUrl = null;
+var _authorPreviewStories = [];
+var _authorPreviewSort = { field: 'date', dir: 'desc' };
+var _authorId = null;
+var _authorWatched = false;
+var _authorSelected = new Set();   // URLs of picked stories and parts
+var _authorExpanded = new Set();   // URLs of series shown open
+var _authorFilterTerms = [];
+
+var AUTHOR_SORT_LABELS = {
+  date: ['↓ Newest first', '↑ Oldest first'],
+  title: ['↓ Z to A', '↑ A to Z'],
+};
 
 function openAuthorPreviewModal(authorUrl) {
   _authorPreviewUrl = authorUrl;
   _authorPreviewStories = [];
-  _authorPreviewSort = { field: 'score', dir: 'desc' };
+  _authorPreviewSort = { field: 'date', dir: 'desc' };
   _authorId = null;
   _authorWatched = false;
+  _authorSelected = new Set();
+  _authorExpanded = new Set();
+  _authorFilterTerms = [];
 
   _setAuthorPreviewState('loading');
   document.getElementById('authorPreviewTitle').textContent = 'Author Stories';
@@ -140,6 +184,36 @@ function retryAuthorPreview() {
   }
 }
 
+// --- Stories, parts and what can be picked ---
+
+function _authorParts(entry) {
+  return entry.is_series && Array.isArray(entry.parts) && entry.parts.length ? entry.parts : null;
+}
+
+// The things that get ticked: stories, and the parts of series (a series without a parts list
+// — from the older page-reading fallback — is ticked as a whole).
+function _authorLeaves() {
+  const leaves = [];
+  _authorPreviewStories.forEach(entry => {
+    const parts = _authorParts(entry);
+    if (parts) parts.forEach(part => leaves.push({ item: part, series: entry }));
+    else leaves.push({ item: entry, series: null });
+  });
+  return leaves;
+}
+
+function _authorPickable(item) {
+  return !item.in_library && !item.is_queued;
+}
+
+function _authorMatch(item, series) {
+  if (!_authorFilterTerms.length) return null;
+  const text = [item.title, item.description, item.category, ...(item.tags || []),
+                series ? series.title : '', series ? series.description : '']
+    .filter(Boolean).join(' \n ').toLowerCase();
+  return _authorFilterTerms.find(term => text.includes(term.toLowerCase())) || null;
+}
+
 async function _fetchAuthorPreview(authorUrl) {
   try {
     const res = await fetch('/api/authors/preview', {
@@ -155,13 +229,26 @@ async function _fetchAuthorPreview(authorUrl) {
     _authorPreviewStories = data.stories || [];
     _authorId = data.author_id || null;
     _authorWatched = data.watch_enabled || false;
-    const total = _authorPreviewStories.length;
-    const inLibrary = _authorPreviewStories.filter(s => s.in_library || s.is_queued).length;
+    _authorFilterTerms = (data.filter_terms || []).filter(t => t && t.trim());
+    // Start with everything that isn't already in the library ticked.
+    _authorLeaves().forEach(({ item }) => { if (_authorPickable(item)) _authorSelected.add(item.url); });
+
+    const series = _authorPreviewStories.filter(e => e.is_series).length;
+    const singles = _authorPreviewStories.length - series;
+    const leaves = _authorLeaves();
+    const inLibrary = leaves.filter(({ item }) => item.in_library || item.is_queued).length;
+    const bits = [`${singles} ${singles === 1 ? 'story' : 'stories'}`];
+    if (series) {
+      const parts = _authorPreviewStories.reduce((n, e) => n + ((_authorParts(e) || []).length), 0);
+      bits.push(`${series} ${series === 1 ? 'series' : 'series'}${parts ? ` (${parts} parts)` : ''}`);
+    }
+    if (inLibrary) bits.push(`${inLibrary} already in library or queued`);
     document.getElementById('authorPreviewTitle').textContent = data.author_name || 'Author Stories';
-    document.getElementById('authorPreviewSubtitle').textContent =
-      inLibrary > 0
-        ? `${total} ${total === 1 ? 'work' : 'works'} · ${inLibrary} already in library`
-        : `${total} ${total === 1 ? 'work' : 'works'} found`;
+    document.getElementById('authorPreviewSubtitle').textContent = bits.join(' · ');
+
+    document.getElementById('authorFilterControls').classList.toggle('hidden', !_authorFilterTerms.length);
+    document.getElementById('authorFilterControls').classList.toggle('flex', !!_authorFilterTerms.length);
+    document.getElementById('authorFilterSetup').classList.toggle('hidden', !!_authorFilterTerms.length);
     _updateSortUI();
     _renderAuthorStoryList();
     _setAuthorPreviewState('results');
@@ -186,6 +273,7 @@ function _setAuthorPreviewState(state) {
 
 function setSortField(field) {
   _authorPreviewSort.field = field;
+  _authorPreviewSort.dir = field === 'title' ? 'asc' : 'desc';
   _updateSortUI();
   _renderAuthorStoryList();
 }
@@ -198,143 +286,246 @@ function toggleSortDir() {
 
 function _updateSortUI() {
   const { field, dir } = _authorPreviewSort;
-  const dateBtn = document.getElementById('sort-field-date');
-  const scoreBtn = document.getElementById('sort-field-score');
-  if (dateBtn && scoreBtn) {
-    const setActive = (btn, active) => {
-      btn.classList.toggle('bg-slate-900', active);
-      btn.classList.toggle('dark:bg-slate-100', active);
-      btn.classList.toggle('text-white', active);
-      btn.classList.toggle('dark:text-slate-900', active);
-      btn.classList.toggle('bg-white', !active);
-      btn.classList.toggle('dark:bg-slate-700', !active);
-      btn.classList.toggle('text-slate-600', !active);
-      btn.classList.toggle('dark:text-slate-300', !active);
-    };
-    setActive(dateBtn, field === 'date');
-    setActive(scoreBtn, field === 'score');
-  }
+  const select = document.getElementById('authorSortField');
+  if (select) select.value = field;
+  const labels = AUTHOR_SORT_LABELS[field] || ['↓ Highest first', '↑ Lowest first'];
   const dirBtn = document.getElementById('sort-dir-btn');
-  if (dirBtn) {
-    dirBtn.textContent = field === 'date'
-      ? (dir === 'desc' ? '↓ Newest first' : '↑ Oldest first')
-      : (dir === 'desc' ? '↓ Highest first' : '↑ Lowest first');
-  }
+  if (dirBtn) dirBtn.textContent = dir === 'desc' ? labels[0] : labels[1];
 }
 
 function _parseDate(dateStr) {
   if (!dateStr) return null;
   const parts = dateStr.split('/');
   if (parts.length === 3) return new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
-  return new Date(dateStr);
+  const d = new Date(dateStr);
+  return isNaN(d) ? null : d;
+}
+
+function _authorSortValue(entry, field) {
+  if (field === 'date') { const d = _parseDate(entry.date_approve); return d ? d.getTime() : null; }
+  if (field === 'title') return (entry.title || '').toLowerCase();
+  if (field === 'rating') { const v = parseFloat(entry.rating ?? entry.score); return isNaN(v) ? null : v; }
+  const v = entry[field];
+  return typeof v === 'number' ? v : null;
 }
 
 function _getSortedStories() {
   const { field, dir } = _authorPreviewSort;
+  const sign = dir === 'asc' ? 1 : -1;
   return [..._authorPreviewStories].sort((a, b) => {
-    let aVal, bVal;
-    if (field === 'score') {
-      aVal = parseFloat(a.score) || 0;
-      bVal = parseFloat(b.score) || 0;
-    } else {
-      aVal = _parseDate(a.date_approve) || new Date(0);
-      bVal = _parseDate(b.date_approve) || new Date(0);
-    }
-    if (aVal < bVal) return dir === 'asc' ? -1 : 1;
-    if (aVal > bVal) return dir === 'asc' ? 1 : -1;
-    return 0;
+    const av = _authorSortValue(a, field), bv = _authorSortValue(b, field);
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;   // unknown values always go last
+    if (bv === null) return -1;
+    if (field === 'title') return sign * av.localeCompare(bv);
+    return sign * (av - bv);
   });
+}
+
+// --- Picking ---
+
+function _authorSeriesState(entry) {
+  const parts = (_authorParts(entry) || []).filter(_authorPickable);
+  const picked = parts.filter(p => _authorSelected.has(p.url)).length;
+  return { total: parts.length, picked };
+}
+
+function authorToggleItem(url, on) {
+  if (on) _authorSelected.add(url); else _authorSelected.delete(url);
+  _renderAuthorStoryList();
+}
+
+function authorToggleSeries(url, on) {
+  const entry = _authorPreviewStories.find(e => e.url === url);
+  if (!entry) return;
+  (_authorParts(entry) || []).filter(_authorPickable)
+    .forEach(p => { if (on) _authorSelected.add(p.url); else _authorSelected.delete(p.url); });
+  _renderAuthorStoryList();
+}
+
+function authorToggleExpanded(url) {
+  if (_authorExpanded.has(url)) _authorExpanded.delete(url); else _authorExpanded.add(url);
+  _renderAuthorStoryList();
+}
+
+function authorSelectAll(on) {
+  _authorLeaves().forEach(({ item }) => {
+    if (!_authorPickable(item)) return;
+    if (on) _authorSelected.add(item.url); else _authorSelected.delete(item.url);
+  });
+  _renderAuthorStoryList();
+}
+
+function authorSelectMatches(on) {
+  let count = 0;
+  _authorLeaves().forEach(({ item, series }) => {
+    if (!_authorPickable(item) || !_authorMatch(item, series)) return;
+    count++;
+    if (on) _authorSelected.add(item.url); else _authorSelected.delete(item.url);
+  });
+  _renderAuthorStoryList();
+  window.toast?.show(count
+    ? `${on ? 'Selected' : 'Deselected'} ${count} matching ${count === 1 ? 'story' : 'stories'}`
+    : 'Nothing left to add matches your filter terms', count ? 'success' : 'info');
 }
 
 // --- Render ---
 
-function _renderAuthorStoryList() {
-  const list = document.getElementById('authorStoryList');
-  const sorted = _getSortedStories();
-  const addAllBtn = document.getElementById('addAllStoriesBtn');
-  const pendingCount = _authorPreviewStories.filter(s => !s.in_library && !s.is_queued).length;
-  if (addAllBtn) {
-    addAllBtn.classList.toggle('hidden', pendingCount === 0);
-    addAllBtn.textContent = 'Add All';
+function _fmtCount(n) {
+  if (typeof n !== 'number') return null;
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
+
+function _authorStats(item) {
+  const bits = [];
+  const rating = parseFloat(item.rating ?? item.score);
+  if (!isNaN(rating)) bits.push(`<span title="Rating">★ ${rating.toFixed(2)}</span>`);
+  const add = (value, icon, title) => { const v = _fmtCount(value); if (v !== null) bits.push(`<span title="${title}">${icon} ${v}</span>`); };
+  add(item.views, '👁', 'Reads');
+  add(item.favorites, '♥', 'Favorites');
+  add(item.saves, '🔖', 'Saved to reading lists');
+  add(item.comments, '💬', 'Comments');
+  if (typeof item.words === 'number') bits.push(`<span title="Words">${_fmtCount(item.words)} words</span>`);
+  if (item.date_approve) bits.push(`<span title="Published">${_escHtml(item.date_approve)}</span>`);
+  return bits.length
+    ? `<div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs text-slate-500 dark:text-slate-400">${bits.join('')}</div>`
+    : '';
+}
+
+function _authorChip(text, cls) {
+  return `<span class="px-2 py-0.5 rounded-full text-xs font-medium ${cls}">${_escHtml(text)}</span>`;
+}
+
+function _authorRow(item, opts) {
+  const { series = null, isSeries = false, indent = false } = opts;
+  const pickable = isSeries ? _authorSeriesState(item).total > 0 : _authorPickable(item);
+  const status = item.in_library ? 'In library' : (item.is_queued ? 'Queued' : null);
+
+  let checked = false, mixed = false;
+  if (isSeries) {
+    const st = _authorSeriesState(item);
+    checked = st.total > 0 && st.picked === st.total;
+    mixed = st.picked > 0 && st.picked < st.total;
+  } else {
+    checked = _authorSelected.has(item.url);
   }
+
+  const chips = [];
+  if (item.category) chips.push(_authorChip(item.category, 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'));
+  if (isSeries) {
+    const n = (_authorParts(item) || []).length || item.chapter_count;
+    chips.push(_authorChip(n > 1 ? `${n}-part series` : 'Series', 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300'));
+  }
+  if (status) chips.push(_authorChip(status, 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'));
+  if (!isSeries) {
+    const match = _authorMatch(item, series);
+    if (match) chips.push(_authorChip(`Matches “${match}”`, 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300'));
+  }
+
+  const parts = isSeries ? _authorParts(item) : null;
+  const open = isSeries && _authorExpanded.has(item.url);
+  const caret = parts
+    ? `<button type="button" data-expand="${_escAttr(item.url)}" class="author-caret flex-shrink-0 p-1 -ml-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} the parts of ${_escAttr(item.title)}">
+         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+       </button>`
+    : (indent ? '' : '<span class="w-5 flex-shrink-0"></span>');
+
+  const box = `<input type="checkbox" class="author-check" ${isSeries ? `data-series="${_escAttr(item.url)}"` : `data-item="${_escAttr(item.url)}"`}
+      ${checked ? 'checked' : ''} ${mixed ? 'data-mixed="1"' : ''} ${pickable ? '' : 'disabled'}
+      aria-label="${isSeries ? 'All parts of ' : ''}${_escAttr(item.title)}">`;
+
+  const dim = !pickable;
+  return `
+    <div class="flex items-start gap-2.5 ${indent ? 'pl-12 pr-5 sm:pr-6 py-2.5 bg-slate-50/50 dark:bg-slate-900/20' : 'px-5 sm:px-6 py-3'} ${dim ? 'opacity-60' : ''}">
+      ${indent ? '' : caret}
+      <div class="pt-0.5">${box}</div>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-medium text-slate-900 dark:text-white flex items-center gap-1.5 min-w-0">
+          <span class="truncate">${_escHtml(item.title)}</span>
+          <a href="${_escAttr(item.url)}" target="_blank" rel="noopener noreferrer" title="Open on Literotica"
+            class="flex-shrink-0 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+            </svg>
+          </a>
+        </p>
+        ${chips.length ? `<div class="flex flex-wrap gap-1.5 mt-1">${chips.join('')}</div>` : ''}
+        ${_authorStats(item)}
+        ${item.description ? `<p class="mt-0.5 text-xs text-slate-400 dark:text-slate-500 line-clamp-1">${_escHtml(item.description)}</p>` : ''}
+      </div>
+    </div>
+    ${parts && open ? `<div class="divide-y divide-slate-100 dark:divide-slate-700/40">${parts.map(p => _authorRow(p, { series: item, indent: true })).join('')}</div>` : ''}`;
+}
+
+function _authorUpdateFooter() {
+  const picked = _authorLeaves().filter(({ item }) => _authorPickable(item) && _authorSelected.has(item.url)).length;
+  const pickable = _authorLeaves().filter(({ item }) => _authorPickable(item)).length;
+  const btn = document.getElementById('addAllStoriesBtn');
+  if (btn) {
+    btn.classList.toggle('hidden', pickable === 0);
+    btn.disabled = picked === 0;
+    btn.textContent = picked ? `Add ${picked} ${picked === 1 ? 'story' : 'stories'}` : 'Add Selected';
+  }
+  const count = document.getElementById('authorSelectedCount');
+  if (count) count.textContent = pickable ? `${picked} of ${pickable} selected` : 'Everything is already in your library';
 
   const watchLabel = document.getElementById('authorWatchLabel');
   const standaloneLabel = document.getElementById('authorWatchStandaloneLabel');
   if (watchLabel) {
-    watchLabel.classList.toggle('hidden', pendingCount === 0);
-    watchLabel.classList.toggle('flex', pendingCount > 0);
+    watchLabel.classList.toggle('hidden', pickable === 0);
+    watchLabel.classList.toggle('flex', pickable > 0);
   }
   if (standaloneLabel) {
-    const showStandalone = pendingCount === 0 && _authorId !== null;
+    const showStandalone = pickable === 0 && _authorId !== null;
     standaloneLabel.classList.toggle('hidden', !showStandalone);
     standaloneLabel.classList.toggle('flex', showStandalone);
     if (showStandalone) _syncStandaloneWatchToggle();
   }
 
-  list.innerHTML = sorted.map(story => {
-    const score = story.score ? parseFloat(story.score).toFixed(2) : null;
-    const date = story.date_approve || null;
-    const inLibrary = story.in_library || story.is_queued;
-    const statusLabel = story.in_library ? 'In library' : (story.is_queued ? 'Queued' : null);
+  const info = document.getElementById('authorFilterInfo');
+  if (info && _authorFilterTerms.length) {
+    const matches = _authorLeaves().filter(({ item, series }) => _authorPickable(item) && _authorMatch(item, series)).length;
+    info.textContent = `${matches} ${matches === 1 ? 'story matches' : 'stories match'} your ${_authorFilterTerms.length} ${_authorFilterTerms.length === 1 ? 'term' : 'terms'}`;
+  }
+}
 
-    const tags = [];
-    if (story.category) {
-      tags.push(`<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">${_escHtml(story.category)}</span>`);
-    }
-    if (story.is_series) {
-      const label = story.chapter_count > 1 ? `${story.chapter_count}-part series` : 'Series';
-      tags.push(`<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300">${label}</span>`);
-    }
+function _renderAuthorStoryList() {
+  const list = document.getElementById('authorStoryList');
+  const scroll = list.scrollTop;
+  list.innerHTML = _getSortedStories()
+    .map(entry => `<div>${_authorRow(entry, { isSeries: !!_authorParts(entry) })}</div>`)
+    .join('');
+  // A series with only some parts ticked shows a half-ticked box.
+  list.querySelectorAll('input[data-mixed]').forEach(box => { box.indeterminate = true; });
+  list.scrollTop = scroll;
+  _authorUpdateFooter();
+}
 
-    const metaParts = [];
-    if (score) metaParts.push(`<span title="Literotica score">★ ${score}</span>`);
-    if (date) metaParts.push(`<span>${_escHtml(date)}</span>`);
-
-    const tagsRow = tags.length
-      ? `<div class="flex flex-wrap gap-1.5 mt-1">${tags.join('')}</div>`
-      : '';
-    const metaRow = metaParts.length
-      ? `<div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-xs text-slate-400 dark:text-slate-500">${metaParts.join('')}</div>`
-      : '';
-    const descRow = story.description
-      ? `<p class="mt-0.5 text-xs text-slate-400 dark:text-slate-500 line-clamp-1">${_escHtml(story.description)}</p>`
-      : '';
-
-    const rowBg = inLibrary
-      ? 'bg-slate-50/60 dark:bg-slate-700/20'
-      : 'hover:bg-slate-50 dark:hover:bg-slate-700/40';
-
-    const btn = inLibrary
-      ? `<button disabled class="flex-shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-600 text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-700/50 cursor-not-allowed" title="${statusLabel}">${statusLabel}</button>`
-      : `<button data-story-url="${_escAttr(story.url)}" onclick="addSingleStory(this)" class="flex-shrink-0 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-slate-300 transition-colors duration-150">Add</button>`;
-
-    return `
-      <div class="flex items-center gap-3 px-5 py-3 transition-colors duration-100 ${rowBg}">
-        <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium ${inLibrary ? 'text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-white'} truncate flex items-center gap-1.5">
-            <span class="truncate">${_escHtml(story.title)}</span>
-            <a href="${_escAttr(story.url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Open on Literotica"
-              class="flex-shrink-0 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors duration-150">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-              </svg>
-            </a>
-          </p>
-          ${tagsRow}${metaRow}${descRow}
-        </div>
-        ${btn}
-      </div>`;
-  }).join('');
+if (!window._authorListBound) {
+  window._authorListBound = true;
+  document.addEventListener('change', e => {
+    const box = e.target;
+    if (!box.closest || !box.closest('#authorStoryList')) return;
+    if (box.dataset.series) authorToggleSeries(box.dataset.series, box.checked);
+    else if (box.dataset.item) authorToggleItem(box.dataset.item, box.checked);
+  });
+  // Capture phase: the window's panel stops clicks from bubbling up to the page.
+  document.addEventListener('click', e => {
+    const btn = e.target.closest && e.target.closest('#authorStoryList [data-expand]');
+    if (btn) authorToggleExpanded(btn.dataset.expand);
+  }, true);
 }
 
 function _escHtml(str) {
   if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function _escAttr(str) {
   if (!str) return '';
-  return str.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
 }
 
 // --- Watch toggle (standalone: all-already-added case) ---
@@ -367,13 +558,35 @@ async function toggleAuthorWatchDirect() {
   }
 }
 
-// --- Add all stories ---
+// --- Add the picked stories ---
 
-async function addAllStories() {
-  const pending = _authorPreviewStories.filter(s => !s.in_library && !s.is_queued);
-  if (!pending.length) return;
+// What to download: whole stories, whole series (all parts ticked), and for series with only
+// some parts ticked, just those parts (one book per series).
+function _authorPickedRequest() {
+  const storyUrls = [], partGroups = [], knownUrls = [], picked = [];
+  _authorPreviewStories.forEach(entry => {
+    knownUrls.push(entry.url);
+    const parts = _authorParts(entry);
+    if (!parts) {
+      if (_authorPickable(entry) && _authorSelected.has(entry.url)) { storyUrls.push(entry.url); picked.push(entry); }
+      return;
+    }
+    parts.forEach(p => knownUrls.push(p.url));
+    const chosen = parts.filter(p => _authorPickable(p) && _authorSelected.has(p.url));
+    if (!chosen.length) return;
+    picked.push(...chosen);
+    if (chosen.length === parts.length) storyUrls.push(entry.url);
+    else partGroups.push(chosen.map(p => p.url));
+  });
+  return { storyUrls, partGroups, knownUrls, picked };
+}
+
+async function addSelectedStories() {
+  const { storyUrls, partGroups, knownUrls, picked } = _authorPickedRequest();
+  if (!picked.length) return;
 
   const btn = document.getElementById('addAllStoriesBtn');
+  const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Adding…';
 
@@ -384,52 +597,29 @@ async function addAllStories() {
     const res = await fetch('/api/authors/queue-stories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ author_url: _authorPreviewUrl, story_urls: pending.map(s => s.url), watch }),
+      body: JSON.stringify({
+        author_url: _authorPreviewUrl, story_urls: storyUrls, part_groups: partGroups,
+        known_urls: knownUrls, watch,
+      }),
     });
     const data = await res.json();
     if (data.success) {
-      pending.forEach(s => { s.is_queued = true; });
+      picked.forEach(item => { item.is_queued = true; _authorSelected.delete(item.url); });
+      _authorPreviewStories.forEach(entry => {
+        const parts = _authorParts(entry);
+        if (parts && parts.every(p => p.in_library || p.is_queued)) entry.is_queued = !entry.in_library;
+        if (!parts && storyUrls.includes(entry.url)) entry.is_queued = true;
+      });
       _renderAuthorStoryList();
-      window.toast?.show(data.message || `${pending.length} stories queued!`, 'success');
+      window.toast?.show(data.message || `${picked.length} stories queued!`, 'success');
     } else {
       btn.disabled = false;
-      btn.textContent = 'Add All';
+      btn.textContent = original;
       window.toast?.show(data.message || 'Failed to queue stories.', 'error');
     }
   } catch (err) {
     btn.disabled = false;
-    btn.textContent = `Add All (${pending.length})`;
-    window.toast?.show('Request failed. Please try again.', 'error');
-  }
-}
-
-// --- Add single story ---
-
-async function addSingleStory(btn) {
-  const storyUrl = btn.dataset.storyUrl;
-  btn.disabled = true;
-  btn.textContent = '…';
-
-  try {
-    const res = await fetch('/api/authors/queue-stories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ author_url: _authorPreviewUrl, story_urls: [storyUrl] }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      btn.textContent = 'Queued';
-      btn.className = 'flex-shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-600 text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-700/50 cursor-not-allowed';
-      btn.removeAttribute('onclick');
-      window.toast?.show(data.message || 'Story queued!', 'success');
-    } else {
-      btn.disabled = false;
-      btn.textContent = 'Add';
-      window.toast?.show(data.message || 'Failed to queue story.', 'error');
-    }
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = 'Add';
+    btn.textContent = original;
     window.toast?.show('Request failed. Please try again.', 'error');
   }
 }

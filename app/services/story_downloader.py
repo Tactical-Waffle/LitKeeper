@@ -358,8 +358,12 @@ def _download_from_series_page(
         log_error(f"Error in series-first download: {str(e)}", series_url)
         return None
 
-def download_story(url: str) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[list[str]], Optional[str], Optional[int], Optional[str], Optional[str], Optional[dict]]:
+def download_story(url: str, only_this_part: bool = False) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[list[str]], Optional[str], Optional[int], Optional[str], Optional[str], Optional[dict]]:
     """Download and extract the full story content and metadata from the given Literotica URL.
+
+    A story page that belongs to a series normally downloads the whole series. With
+    only_this_part=True (a /s/ URL picked on its own) just that part is downloaded, and it
+    is saved as a standalone story, not linked to the series.
 
     The final tuple element is a stats dict with keys: score, views, favorites, comments.
     """
@@ -373,7 +377,7 @@ def download_story(url: str) -> tuple[Optional[str], Optional[str], Optional[str
         url_type, series_url = detect_url_type(url)
         log_url(f"URL type detected: {url_type}")
 
-        if url_type == 'chapter':
+        if url_type == 'chapter' and not only_this_part:
             series_url = extract_series_url_from_chapter(url, session)
 
         if series_url:
@@ -523,7 +527,7 @@ def download_story(url: str) -> tuple[Optional[str], Optional[str], Optional[str
                                 series_section = section
                                 break
 
-                        if series_section:
+                        if series_section and not only_this_part:
                             if not series_url:
                                 series_link = series_section.find("a", href=lambda h: h and "/series/se/" in h)
                                 if series_link:
@@ -568,6 +572,8 @@ def download_story(url: str) -> tuple[Optional[str], Optional[str], Optional[str
         for i, (title, content) in enumerate(zip(chapter_titles, chapter_contents), 1):
             story_content += f"{CHAPTER_SENTINEL}CHAPTER:{i}{CHAPTER_SENTINEL}{title}\n\n{content}"
 
+        if only_this_part:
+            series_url = None
         return story_content, story_title, story_author, story_category, story_tags, story_author_url, total_pages, series_url, story_description, story_stats
 
     except Exception as e:
@@ -684,9 +690,11 @@ def fetch_story_metadata(url: str) -> dict:
         return {}
 
 
-def download_and_combine_stories(urls: list[str]) -> tuple:
+def download_and_combine_stories(urls: list[str], only_these_parts: bool = False) -> tuple:
     """
     Download multiple story URLs and combine them into a single story.
+    With only_these_parts=True each /s/ URL is downloaded on its own, without the rest of its
+    series (used when only some parts of a series were picked).
 
     Uses the first URL's metadata (title, author, category, tags, author_url,
     series_url, description).  Each downloaded story becomes a chapter group
@@ -714,7 +722,7 @@ def download_and_combine_stories(urls: list[str]) -> tuple:
 
     for idx, url in enumerate(urls):
         log_action(f"[CombineDownload] Downloading {idx + 1}/{len(urls)}: {url}")
-        result = download_story(url)
+        result = download_story(url, only_this_part=only_these_parts)
         content, title, author, category, tags, author_url, pages, series_url, description, stats = result
 
         if not content or not title:

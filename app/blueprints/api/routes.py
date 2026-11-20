@@ -1723,6 +1723,14 @@ def queue_author_download() -> ResponseReturnValue:
         return jsonify({"success": False, "message": "Internal server error"}), 500
 
 
+def _story_filter_terms() -> list[str]:
+    """Settings → Story Filter: words that select or deselect matching stories in the author window."""
+    from app.models import AppConfig
+    cfg = AppConfig.query.filter_by(key='story_filter_terms').first()
+    value = cfg.get_value() if cfg else None
+    return [str(t) for t in value if str(t).strip()] if isinstance(value, list) else []
+
+
 @api.route('/authors/preview', methods=['POST'])
 def preview_author_stories() -> ResponseReturnValue:
     """Synchronously scrape an author page and return story list with metadata. No DB writes."""
@@ -1740,23 +1748,37 @@ def preview_author_stories() -> ResponseReturnValue:
         canonical = normalize_author_url(author_url) or author_url
         author_name = canonical.rstrip('/').split('/')[-1]
 
-        scraper = AuthorScraper()
-        stories = scraper.scrape_story_list_with_metadata(canonical, skip_jitter=True)
+        # Literotica's works feed gives every story and series (with parts and their numbers);
+        # reading the web page is the fallback for memberpage URLs or if the feed fails.
+        from app.services.author_scraper import author_username, fetch_author_works
+        username = author_username(canonical)
+        stories = fetch_author_works(username) if username else None
+        if stories is None:
+            scraper = AuthorScraper()
+            stories = scraper.scrape_story_list_with_metadata(canonical, skip_jitter=True)
+        else:
+            author_name = username
 
         if not stories:
             return jsonify({"success": False, "message": "No stories found for this author. The page may have changed or the author has no public submissions."}), 404
 
         from app.models import SeenLiteroticaUrl, DownloadQueueItem, Author
-        story_urls = [s['url'] for s in stories]
+        all_urls = [s['url'] for s in stories] + [p['url'] for s in stories for p in s.get('parts') or []]
         seen_urls = {
-            r.url for r in SeenLiteroticaUrl.query.filter(SeenLiteroticaUrl.url.in_(story_urls)).all()
+            r.url for r in SeenLiteroticaUrl.query.filter(SeenLiteroticaUrl.url.in_(all_urls)).all()
         }
-        queued_urls = {
-            r.url for r in DownloadQueueItem.query.filter(DownloadQueueItem.url.in_(story_urls)).all()
-        }
+        queued = DownloadQueueItem.query.filter(
+            DownloadQueueItem.status.in_(['pending', 'processing', 'rate_limited'])).all()
+        queued_urls = {q.url for q in queued}
+        for q in queued:
+            queued_urls.update(q.get_extra_urls() or [])
         for s in stories:
-            s['in_library'] = s['url'] in seen_urls
-            s['is_queued'] = s['url'] in queued_urls
+            parts = s.get('parts') or []
+            for part in parts:
+                part['in_library'] = part['url'] in seen_urls or s['url'] in seen_urls
+                part['is_queued'] = part['url'] in queued_urls or s['url'] in queued_urls
+            s['in_library'] = s['url'] in seen_urls or (bool(parts) and all(p['in_library'] for p in parts))
+            s['is_queued'] = s['url'] in queued_urls or (bool(parts) and all(p['in_library'] or p['is_queued'] for p in parts) and not s['in_library'])
 
         author_obj = Author.query.filter_by(literotica_url=canonical).first()
         return jsonify({
@@ -1766,6 +1788,7 @@ def preview_author_stories() -> ResponseReturnValue:
             "author_id": author_obj.id if author_obj else None,
             "watch_enabled": author_obj.watch_enabled if author_obj else False,
             "stories": stories,
+            "filter_terms": _story_filter_terms(),
         })
 
     except Exception as e:
@@ -1780,11 +1803,19 @@ def queue_author_stories() -> ResponseReturnValue:
         data = request.get_json() or {}
         author_url = (data.get('author_url') or '').strip()
         story_urls = data.get('story_urls') or []
+        # Parts picked from a series without the whole of it: one list of part URLs per series.
+        # A single part becomes a 'part' download, several become one 'parts' book.
+        part_groups = [[u for u in g if isinstance(u, str) and u] for g in (data.get('part_groups') or [])
+                       if isinstance(g, list)]
+        part_groups = [g for g in part_groups if g]
+        # Everything listed in the window, picked or not, so watching doesn't later treat the
+        # stories left out on purpose as new ones.
+        known_urls = [u for u in (data.get('known_urls') or []) if isinstance(u, str)]
         watch = bool(data.get('watch', False))
 
         if not author_url:
             return jsonify({"success": False, "message": "author_url is required"}), 400
-        if not story_urls:
+        if not story_urls and not part_groups:
             return jsonify({"success": False, "message": "No story URLs provided"}), 400
 
         from app.services.author_scraper import is_author_url, normalize_author_url
@@ -1813,7 +1844,8 @@ def queue_author_stories() -> ResponseReturnValue:
             author_obj.watch_enabled = watch
 
         # Update known_story_urls with all submitted URLs (the full author story list)
-        all_known = list(set(author_obj.get_known_story_urls() + story_urls))
+        all_known = list(set(author_obj.get_known_story_urls() + story_urls + known_urls
+                             + [u for g in part_groups for u in g]))
         author_obj.set_known_story_urls(all_known)
 
         from datetime import datetime
@@ -1844,6 +1876,31 @@ def queue_author_stories() -> ResponseReturnValue:
                 author=author_obj.name,
                 progress_message='Queued from author preview',
             )
+            db.session.add(child)
+            enqueued += 1
+
+        for group in part_groups:
+            wanted = [u for u in group if not SeenLiteroticaUrl.query.filter_by(url=u).first()]
+            if not wanted:
+                skipped += 1
+                continue
+            busy = DownloadQueueItem.query.filter(
+                DownloadQueueItem.url == wanted[0],
+                DownloadQueueItem.status.in_(['pending', 'processing', 'rate_limited'])
+            ).first()
+            if busy:
+                skipped += 1
+                continue
+            child = DownloadQueueItem(
+                url=wanted[0],
+                formats=json.dumps(['epub', 'html']),
+                status='pending',
+                job_type='part' if len(wanted) == 1 else 'parts',
+                author=author_obj.name,
+                progress_message='Queued from author preview' + ('' if len(wanted) == 1 else f' ({len(wanted)} parts)'),
+            )
+            if len(wanted) > 1:
+                child.set_extra_urls(wanted[1:])
             db.session.add(child)
             enqueued += 1
 

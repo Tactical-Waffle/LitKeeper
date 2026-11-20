@@ -238,7 +238,7 @@ class DownloadQueueWorker:
             downloaded = True
             if item.job_type == 'author':
                 self._process_author_scan(item)
-            elif item.job_type == 'multi':
+            elif item.job_type in ('multi', 'parts'):
                 downloaded = self._download_and_save_multi(item)
             else:
                 downloaded = self._download_and_save(item)
@@ -303,7 +303,8 @@ class DownloadQueueWorker:
         item.progress_message = 'Downloading story content...'
         db.session.commit()
 
-        story_data = download_story(item.url)
+        # 'part': one part of a series picked on its own in the author window — download just it.
+        story_data = download_story(item.url, only_this_part=item.job_type == 'part')
         story_content, title, author, category, tags, author_url, page_count, series_url, story_description, story_stats = story_data
 
         if not story_content or not title:
@@ -367,7 +368,8 @@ class DownloadQueueWorker:
         item.progress_message = f'Downloading and combining {len(all_urls)} stories...'
         db.session.commit()
 
-        story_data = download_and_combine_stories(all_urls)
+        # 'parts': some parts of one series picked in the author window — only those, as one book.
+        story_data = download_and_combine_stories(all_urls, only_these_parts=item.job_type == 'parts')
         story_content, title, author, category, tags, author_url, page_count, series_url, story_description, all_authors, all_tags, story_stats = story_data
 
         if not story_content or not title:

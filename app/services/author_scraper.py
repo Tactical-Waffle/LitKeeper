@@ -55,6 +55,130 @@ def _has_class_prefix(tag, prefix: str) -> bool:
     return any(prefix in c for c in cls)
 
 
+LITEROTICA_API = 'https://literotica.com/api/3'
+WORKS_PAGE_SIZE = 50
+WORKS_MAX_PAGES = 40   # 2,000 stories and series; nobody has more
+
+
+def author_username(author_url: str) -> Optional[str]:
+    """The username in a /authors/<name> URL (the works feed needs it); None for memberpage URLs."""
+    m = re.match(r'https?://(?:www\.)?literotica\.com/authors/([^/?#]+)', (author_url or '').strip())
+    return m.group(1) if m else None
+
+
+def _category_name(info: Optional[dict]) -> Optional[str]:
+    if not isinstance(info, dict):
+        return None
+    if info.get('name'):
+        return info['name']
+    page = info.get('pageUrl')
+    if not page:
+        return None
+    from .category_scraper import CATEGORIES
+    for slug, name, _ in CATEGORIES:
+        if slug == page:
+            return name
+    return page.replace('-', ' ').title()
+
+
+def _number(value) -> Optional[float]:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _work_from_api(work: dict) -> dict:
+    """One story from the works feed, in the shape the author window uses."""
+    rating = _number(work.get('rate_all'))
+    return {
+        'url': f"https://www.literotica.com/s/{work.get('url', '')}",
+        'title': html_module.unescape(work.get('title') or 'Untitled'),
+        'is_series': False,
+        'score': f'{rating:.2f}' if rating else None,
+        'rating': rating,
+        'views': work.get('view_count'),
+        'favorites': work.get('favorite_count'),
+        'comments': work.get('comment_count'),
+        'saves': work.get('reading_lists_count'),
+        'words': work.get('words_count'),
+        'date_approve': work.get('date_approve'),
+        'category': _category_name(work.get('category_info')),
+        'description': html_module.unescape(work.get('description') or '') or None,
+        'tags': [t.get('tag') for t in (work.get('tags') or []) if isinstance(t, dict) and t.get('tag')],
+    }
+
+
+def _series_from_api(series: dict) -> dict:
+    """A series from the works feed, with its parts in order and totals for sorting."""
+    parts = [_work_from_api(p) for p in (series.get('parts') or [])]
+    ratings = [p['rating'] for p in parts if p['rating']]
+    dates = [p['date_approve'] for p in parts if p.get('date_approve')]
+    categories = list(dict.fromkeys(p['category'] for p in parts if p.get('category')))
+
+    def total(key):
+        values = [p[key] for p in parts if isinstance(p.get(key), (int, float))]
+        return sum(values) if values else None
+
+    rating = sum(ratings) / len(ratings) if ratings else None
+    return {
+        'url': f"https://www.literotica.com/series/se/{series.get('id')}",
+        'title': html_module.unescape(series.get('title') or 'Untitled series'),
+        'is_series': True,
+        'chapter_count': len(parts) or series.get('work_count'),
+        'parts': parts,
+        'score': f'{rating:.2f}' if rating else None,
+        'rating': rating,
+        'views': total('views'),
+        'favorites': total('favorites'),
+        'comments': total('comments'),
+        'saves': total('saves'),
+        'words': total('words'),
+        'date_approve': _latest_date(dates) if dates else None,
+        'category': categories[0] if len(categories) == 1 else ('Multiple categories' if categories else None),
+        'categories': categories,
+        'description': html_module.unescape(series.get('description') or '') or next(
+            (p['description'] for p in parts if p.get('description')), None),
+        'tags': list(dict.fromkeys(t for p in parts for t in p['tags'])),
+    }
+
+
+def fetch_author_works(username: str, session=None) -> Optional[list[dict]]:
+    """Every story and series of an author from Literotica's own works feed (the one its author
+    pages use), all pages of it. Series come with their parts. Returns None if the feed can't be
+    read, so the caller can fall back to reading the web page."""
+    import json
+    from urllib.parse import quote
+    session = session or get_session()
+    entries: list[dict] = []
+    page, last_page = 1, 1
+    while page <= min(last_page, WORKS_MAX_PAGES):
+        params = json.dumps({'page': page, 'pageSize': WORKS_PAGE_SIZE, 'type': 'story', 'listType': 'expanded'},
+                            separators=(',', ':'))
+        url = f'{LITEROTICA_API}/users/{quote(username)}/series_and_works?params={quote(params)}'
+        try:
+            resp = session.get(url, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            log_error(f"[AuthorScraper] Works feed page {page} for {username} failed: {e}")
+            return None if page == 1 else entries
+        if not isinstance(data, dict) or not isinstance(data.get('data'), list):
+            log_error(f"[AuthorScraper] Works feed for {username} returned an unexpected reply")
+            return None if page == 1 else entries
+        for item in data['data']:
+            if not isinstance(item, dict):
+                continue
+            entries.append(_series_from_api(item) if 'parts' in item else _work_from_api(item))
+        last_page = int(data.get('last_page') or 1)
+        page += 1
+        if page <= last_page:
+            time.sleep(random.uniform(0.5, 1.5))
+    log_action(f"[AuthorScraper] Works feed for {username}: {len(entries)} entries "
+               f"({sum(1 for e in entries if e['is_series'])} series)")
+    return entries
+
+
 class AuthorScraper:
     """Scrape an author's Literotica profile to discover their stories/series."""
 

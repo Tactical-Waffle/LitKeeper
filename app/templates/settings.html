@@ -139,6 +139,32 @@
   </div>
 
   <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
+    <section id="storyFilterSection">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
+        <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h18M6 8h12M9 12h6M11 16h2" />
+        </svg>
+        Story Filter
+      </h3>
+      <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+        Words or phrases to look for when you open an author's stories. The window's <strong>Select matches</strong> and
+        <strong>Deselect matches</strong> buttons tick or untick every story whose title, description, category or tags
+        contain one of them. Matching ignores upper and lower case. Put one per line, or separate them with commas.
+      </p>
+      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="storyFilterTerms">Filter terms</label>
+      <textarea id="storyFilterTerms" rows="4" placeholder="e.g. incest&#10;non-consent"
+        class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">{{ story_filter_terms | join('\n') }}</textarea>
+      <div class="flex items-center gap-3 mt-3">
+        <button id="storyFilterSaveBtn" type="button" onclick="saveStoryFilter()"
+          class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">
+          Save
+        </button>
+        <span id="storyFilterCount" class="text-xs text-gray-500 dark:text-gray-400">{{ story_filter_terms | length }} {{ 'term' if story_filter_terms | length == 1 else 'terms' }}</span>
+      </div>
+    </section>
+  </div>
+
+  <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
     <section>
       <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
         <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -764,6 +790,16 @@
     button.disabled = true;
     button.textContent = busyText;
     try { return await work(); } finally { button.disabled = false; button.textContent = original; }
+  }
+
+  async function saveStoryFilter() {
+    const button = document.getElementById('storyFilterSaveBtn');
+    const box = document.getElementById('storyFilterTerms');
+    const data = await withBusy(button, 'Saving...', () => notificationRequest('/settings/story-filter', 'POST', { terms: box.value }));
+    if (!data.success) { showToast(data.message || 'Error saving the filter terms', 'error'); return; }
+    box.value = data.terms.join('\n');
+    document.getElementById('storyFilterCount').textContent = `${data.terms.length} ${data.terms.length === 1 ? 'term' : 'terms'}`;
+    showToast('Filter terms saved', 'success');
   }
 
   async function saveDailyDownloadLimit() {
