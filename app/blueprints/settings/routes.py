@@ -57,6 +57,7 @@ def index() -> ResponseReturnValue:
         ai_cover_lettering=ai_cover.LETTERING,
         ai_cover_prompts=ai_prompts.overview(),
         log_files=_log_file_list(),
+        log_retention_days=_log_retention_days(),
         daily_download_limit=dq.get_daily_cap(),
         daily_download_default=dq.DEFAULT_MAX_DAILY_DOWNLOADS,
         daily_download_max=dq.MAX_DAILY_DOWNLOADS_LIMIT,
@@ -64,6 +65,11 @@ def index() -> ResponseReturnValue:
 
 
 _LOG_LABELS = {'litkeeper.log': 'Main Log', 'api.log': 'API Log'}
+
+
+def _log_retention_days() -> int:
+    from app.services.logger import log_retention_days
+    return log_retention_days()
 
 
 def _log_file_list() -> list[dict]:

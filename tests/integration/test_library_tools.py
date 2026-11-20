@@ -190,13 +190,48 @@ class TestLogging:
         assert data['lines'][0] == 'line 701' and data['lines'][-1] == 'line 1200'
         assert client.get('/settings/logs/api.log/tail?lines=3').get_json()['lines'] == ['line 1198', 'line 1199', 'line 1200']
 
-    def test_view_fills_from_previous_file_after_rotation(self, client: FlaskClient) -> None:
+    def test_view_fills_from_previous_days(self, client: FlaskClient) -> None:
         from app.services.logger import log_file_path
         path = Path(log_file_path('api.log'))
-        Path(str(path) + '.1').write_text(''.join(f'old {n}\n' for n in range(1, 11)))
-        path.write_text('new 1\nnew 2\n')
+        Path(str(path) + '.2026-11-17').write_text(''.join(f'day17 {n}\n' for n in range(1, 4)))
+        Path(str(path) + '.2026-11-18').write_text('day18 1\nday18 2\n')
+        path.write_text('today 1\n')
         lines = client.get('/settings/logs/api.log/tail?lines=5').get_json()['lines']
-        assert lines == ['old 8', 'old 9', 'old 10', 'new 1', 'new 2']
+        assert lines == ['day17 2', 'day17 3', 'day18 1', 'day18 2', 'today 1']
+
+    def test_logs_rotate_daily_and_keep_retention_days(self, app: Flask, monkeypatch: pytest.MonkeyPatch) -> None:
+        import logging.handlers
+        from app.services.logger import setup_file_logging, log_file_path
+        monkeypatch.setenv('LOG_RETENTION_DAYS', '3')
+        setup_file_logging()
+        handler = next(h for h in logging.getLogger('litkeeper.api').handlers if getattr(h, '_litkeeper_file', False))
+        assert isinstance(handler, logging.handlers.TimedRotatingFileHandler)
+        assert handler.when == 'MIDNIGHT' and handler.backupCount == 3
+        # Old days beyond the limit are removed when a new day's file starts.
+        base = log_file_path('api.log')
+        for day in range(10, 16):
+            Path(f'{base}.2026-11-{day}').write_text('old\n')
+        logging.getLogger('litkeeper.api').info('before midnight')
+        handler.doRollover()
+        kept = sorted(p.name for p in Path(base).parent.glob('api.log.*'))
+        assert len(kept) == 3
+        assert 'api.log.2026-11-10' not in kept
+
+    @pytest.mark.parametrize('value, expected', [(None, 14), ('30', 30), ('0', 14), ('-2', 14), ('lots', 14)])
+    def test_retention_days_setting(self, monkeypatch: pytest.MonkeyPatch, value, expected) -> None:
+        from app.services.logger import log_retention_days
+        if value is None:
+            monkeypatch.delenv('LOG_RETENTION_DAYS', raising=False)
+        else:
+            monkeypatch.setenv('LOG_RETENTION_DAYS', value)
+        assert log_retention_days() == expected
+
+    def test_old_size_based_files_are_cleared(self, app: Flask) -> None:
+        from app.services.logger import setup_file_logging, log_file_path
+        old = Path(log_file_path('api.log') + '.1')
+        old.write_text('from the 5 MB days\n')
+        setup_file_logging()
+        assert not old.exists()
 
     def test_view_empty_and_unknown_logs(self, client: FlaskClient) -> None:
         from app.services.logger import log_file_path
@@ -212,6 +247,7 @@ class TestLogging:
         page = client.get('/settings/').data
         assert b'id="logsSection"' in page
         assert b'id="logLines"' in page
+        assert b'keeps the last 14 days' in page
         assert b'API Log' in page
         assert b'data-theme-option' not in page
 

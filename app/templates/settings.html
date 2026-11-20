@@ -539,7 +539,8 @@
       <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
         LitKeeper keeps two log files in the <code class="text-xs">logs</code> folder inside your data folder.
         The main log has downloads, errors and page loads. The API log has every API call, kept separate because
-        there are a lot of them. Each file starts a new one at 5 MB and keeps the last 5.
+        there are a lot of them. Each log starts a new file every day at midnight and keeps the last {{ log_retention_days }} {{ 'day' if log_retention_days == 1 else 'days' }}
+        (set with <code class="text-xs">LOG_RETENTION_DAYS</code>).
       </p>
       <div class="flex flex-wrap items-center gap-2 mb-3">
         <div class="inline-flex rounded-lg border border-slate-200 dark:border-gray-700 p-1 bg-slate-50 dark:bg-gray-900" role="tablist" aria-label="Which log">

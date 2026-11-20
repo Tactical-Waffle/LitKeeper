@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 import logging.handlers
+import glob
 import os
 import sys
 from typing import Optional
@@ -9,8 +10,8 @@ from typing import Optional
 MAIN_LOG = 'litkeeper.log'
 API_LOG = 'api.log'
 LOG_FILES = (MAIN_LOG, API_LOG)
-_LOG_MAX_BYTES = 5 * 1024 * 1024
-_LOG_BACKUPS = 5
+DEFAULT_LOG_RETENTION_DAYS = 14
+MAX_LOG_RETENTION_DAYS = 3650
 _FORMAT = logging.Formatter('%(asctime)s - %(name)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
 
@@ -38,9 +39,20 @@ api_logger.setLevel(logging.INFO)
 api_logger.propagate = False
 
 
+def log_retention_days() -> int:
+    """How many days of old log files to keep: the LOG_RETENTION_DAYS environment variable, default 14."""
+    try:
+        days = int(os.environ.get('LOG_RETENTION_DAYS', DEFAULT_LOG_RETENTION_DAYS))
+    except ValueError:
+        return DEFAULT_LOG_RETENTION_DAYS
+    return days if 1 <= days <= MAX_LOG_RETENTION_DAYS else DEFAULT_LOG_RETENTION_DAYS
+
+
 def _file_handler(path: str) -> logging.Handler:
-    handler = logging.handlers.RotatingFileHandler(path, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS,
-                                                   encoding='utf-8', delay=True)
+    # A new file every midnight (server time, so set TZ); yesterday's becomes e.g. api.log.2026-11-19.
+    # Files older than the retention period are deleted at that point.
+    handler = logging.handlers.TimedRotatingFileHandler(path, when='midnight', backupCount=log_retention_days(),
+                                                        encoding='utf-8', delay=True)
     handler.setFormatter(_FORMAT)
     handler._litkeeper_file = True  # marks handlers this module added, so setup can be repeated
     return handler
@@ -53,12 +65,19 @@ def log_file_path(name: str) -> str:
 
 def setup_file_logging() -> None:
     """Write the main log to data/logs/litkeeper.log and API calls to data/logs/api.log.
-    Both rotate at 5 MB, keeping 5 old files. Safe to call more than once."""
+    Both start a new file every day and keep LOG_RETENTION_DAYS days (default 14). Safe to call more than once."""
     try:
         os.makedirs(os.path.dirname(log_file_path(MAIN_LOG)), exist_ok=True)
     except OSError as e:
         print(f"[LOGGING] Could not create the log folder, logging to the console only: {e}", file=sys.stderr)
         return
+    # Earlier builds started a new file at 5 MB (api.log.1 to .5); daily rotation never removes those.
+    for name in LOG_FILES:
+        for number in range(1, 6):
+            try:
+                os.remove(f'{log_file_path(name)}.{number}')
+            except OSError:
+                pass
     targets = {MAIN_LOG: (action_logger, error_logger, url_logger, request_logger), API_LOG: (api_logger,)}
     for name, loggers in targets.items():
         for logger in loggers:
@@ -88,13 +107,20 @@ def _last_lines_of_file(path: str, count: int) -> list[str]:
     return lines[-count:]
 
 
-def tail_log(name: str, count: int = 500) -> list[str]:
-    """The newest `count` lines of one of LitKeeper's logs, oldest first. If the current file
-    has just been started afresh, the end of the previous one (name.1) fills the gap."""
+def older_log_files(name: str) -> list[str]:
+    """Previous days' files for a log (name.YYYY-MM-DD), newest first."""
     path = log_file_path(name)
-    lines = _last_lines_of_file(path, count)
-    if len(lines) < count:
-        lines = _last_lines_of_file(path + '.1', count - len(lines)) + lines
+    return sorted(glob.glob(glob.escape(path) + '.????-??-??'), reverse=True)
+
+
+def tail_log(name: str, count: int = 500) -> list[str]:
+    """The newest `count` lines of one of LitKeeper's logs, oldest first. Early in the day, when
+    today's file is still short, the end of the previous days' files fills the gap."""
+    lines = _last_lines_of_file(log_file_path(name), count)
+    for older in older_log_files(name):
+        if len(lines) >= count:
+            break
+        lines = _last_lines_of_file(older, count - len(lines)) + lines
     return lines
 
 

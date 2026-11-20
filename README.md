@@ -18,7 +18,7 @@ Originally built as a simple EPUB downloader for e-readers, LitKeeper has evolve
 * **Auto-Updates & Notifications:** Receive alerts when downloads finish, through Pushover, Discord, Telegram, ntfy, Gotify or any [Apprise](https://github.com/caronc/apprise#supported-notifications) service. Set them up under **Settings → Notifications**, pick which events each one gets, and send a test. LitKeeper can also check for new chapters and download updates automatically. *(Note: Update schedules are randomized in the code to prevent overwhelming source servers).*
 * **Library Tools:** Press **Select** in the library to pick several stories (shift-click picks a range), then download them as a zip, redraw their covers, make AI covers, turn auto-update on or off, or delete them. **View → Cover size** makes covers smaller or bigger.
 * **Light & Dark Mode:** Switch with the sun/moon button at the top of the screen.
-* **Logs:** LitKeeper writes `logs/litkeeper.log` (downloads, errors, page loads) and a separate `logs/api.log` (every API call, including calls to OpenRouter) inside the data folder. Each starts a new file at 5 MB and keeps the last 5. Read the newest 500 lines, or download the whole file, under **Settings → Logs**.
+* **Logs:** LitKeeper writes `logs/litkeeper.log` (downloads, errors, page loads) and a separate `logs/api.log` (every API call, including calls to OpenRouter) inside the data folder. Each starts a new file every day at midnight and keeps the last 14 days (change with `LOG_RETENTION_DAYS`). Read the newest 500 lines, or download the whole file, under **Settings → Logs**.
 * **Responsive Design:** Enjoy a mobile-friendly UI that dynamically adapts with bottom navigation and optimized spacing for smaller screens.
 * **OPDS Catalog:** Expose your library as an OPDS feed for your e-reader device. Disabled by default; enable and optionally password-protect it under **Settings → OPDS Catalog**.
 
@@ -144,6 +144,7 @@ mkdir -p ./data ./stories
 | `WEBAUTHN_RP_ID` | *(auto)* | Passkey relying party hostname (e.g. `myapp.example.com`). Auto-detected from the request — only set this if a reverse proxy masks the real hostname. Bare hostname only, no port or scheme. |
 | `WEBAUTHN_ORIGIN` | *(auto)* | Full origin for passkey verification (e.g. `https://myapp.example.com`). Auto-detected from the request — only set this if a reverse proxy masks the real hostname. |
 | `WEBAUTHN_RESET_CODE` | - | When set, enables `POST /auth/webauthn/reset` as an emergency passkey recovery endpoint. |
+| `LOG_RETENTION_DAYS` | `14` | How many days of old log files to keep in `logs/`. Each log starts a new file every day at midnight (server time, so set `TZ`). |
 | `MAX_DAILY_DOWNLOADS` | `25` | Maximum stories downloaded per day. Easier to change in Settings → Downloads; a limit saved there takes priority over this. The default is intentionally conservative to avoid hammering source servers — please be a good citizen before raising this. |
 
 ### Volume Mounts
