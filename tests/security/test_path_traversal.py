@@ -19,8 +19,10 @@ class TestPathTraversalDownloadRoute:
 
     def test_download_blocks_absolute_path(self, client: FlaskClient) -> None:
         """Test that absolute paths are blocked."""
-        response = client.get("/download//etc/passwd")
+        # Flask first redirects the doubled slash to /download/etc/passwd (308); that must not serve the file.
+        response = client.get('/download//etc/passwd', follow_redirects=True)
         assert response.status_code == 404
+        assert b'root:' not in response.data
 
     def test_download_blocks_url_encoded_traversal(self, client: FlaskClient) -> None:
         """Test that URL-encoded ../ (%2e%2e%2f) is blocked."""

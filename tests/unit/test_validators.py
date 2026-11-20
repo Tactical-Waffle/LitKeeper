@@ -50,12 +50,13 @@ class TestStoryDownloadRequest:
         """Test that HTTP (not HTTPS) raises validation error."""
         with pytest.raises(ValidationError) as exc_info:
             StoryDownloadRequest(url="http://www.literotica.com/s/story")
-        assert "Only Literotica URLs are allowed" in str(exc_info.value)
+        assert "Only HTTPS URLs are allowed" in str(exc_info.value)
 
     def test_subdomain_mismatch_raises_error(self) -> None:
-        """Test that wrong subdomain raises validation error."""
+        """Literotica's own subdomains are allowed; a look-alike host ending in another domain is not."""
+        assert StoryDownloadRequest(url="https://german.literotica.com/s/story").url.startswith("https://german.")
         with pytest.raises(ValidationError) as exc_info:
-            StoryDownloadRequest(url="https://api.literotica.com/s/story")
+            StoryDownloadRequest(url="https://www.literotica.com.example.net/s/story")
         assert "Only Literotica URLs are allowed" in str(exc_info.value)
 
     def test_literotica_substring_not_sufficient(self) -> None:
@@ -65,9 +66,9 @@ class TestStoryDownloadRequest:
         assert "Only Literotica URLs are allowed" in str(exc_info.value)
 
     def test_format_epub_default(self) -> None:
-        """Test that format defaults to ['epub']."""
+        """Format defaults to both EPUB and the web reader's HTML."""
         request = StoryDownloadRequest(url="https://www.literotica.com/s/story")
-        assert request.format == ["epub"]
+        assert request.format == ["epub", "html"]
 
     def test_format_html_valid(self) -> None:
         """Test that HTML format is valid."""

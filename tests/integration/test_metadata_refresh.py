@@ -8,6 +8,32 @@ from app.services.metadata_refresh_service import MetadataRefreshService
 import time
 
 
+def create_test_story(app: Flask) -> Story:
+    """A story by "Test Author" in Romance tagged love and drama. Call inside an app context."""
+    unique_id = str(int(time.time() * 1000000))
+    author = Author.query.filter_by(name="Test Author").first()
+    if not author:
+        author = Author(name="Test Author")
+        db.session.add(author)
+        db.session.flush()
+    category = Category.query.filter_by(name="Romance").first()
+    if not category:
+        category = Category(name="Romance")
+        db.session.add(category)
+        db.session.flush()
+    tags = []
+    for name in ('love', 'drama'):
+        tag = Tag.query.filter_by(name=name).first() or Tag(name=name)
+        db.session.add(tag)
+        tags.append(tag)
+    story = Story(title=f"Test Story {unique_id}", author_id=author.id, category_id=category.id,
+                  filename_base=f"test-story-{unique_id}")
+    story.tags = tags
+    db.session.add(story)
+    db.session.commit()
+    return story
+
+
 @pytest.fixture
 def metadata_service() -> MetadataRefreshService:
     """Create metadata refresh service instance."""
@@ -150,9 +176,9 @@ class TestMetadataRefreshService:
             assert result['success'] is True
             
             story = db.session.get(Story, story_id)
-            assert len(story.tags.all()) == 1
+            assert len(story.tags) == 1
             
-            tag = story.tags.first()
+            tag = story.tags[0]
             assert tag.id == existing_tag.id
             assert tag.name == 'first-time'
     

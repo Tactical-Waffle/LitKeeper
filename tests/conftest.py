@@ -17,6 +17,20 @@ def test_data_dir() -> Path:
     return Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _keep_tests_out_of_real_folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test, with or without the app, writes stories, covers and logs to a temporary folder,
+    never to the real app/stories or app/data. (The app fixture below points them elsewhere again.)"""
+    import app.utils.paths as paths_module
+    root = tmp_path / "litkeeper-files"
+    for name in ("epubs", "html", "covers", "logs"):
+        (root / name).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(paths_module, "get_stories_directory", lambda: str(root))
+    monkeypatch.setattr(paths_module, "get_data_directory", lambda: str(root))
+    monkeypatch.setattr(paths_module, "get_logs_directory", lambda: str(root / "logs"))
+    monkeypatch.setenv("LITKEEPER_DATABASE_PATH", str(root / "litkeeper.db"))
+
+
 @pytest.fixture(scope="function")
 def temp_dir() -> Generator[Path, None, None]:
     """Create temporary directory for test file operations."""
@@ -28,7 +42,7 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture(scope="function")
-def app(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Flask:
+def app(_keep_tests_out_of_real_folders, temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Flask:
     """Create Flask app with test configuration."""
     monkeypatch.setenv("SECRET_KEY", "test-secret-key-for-testing-only-do-not-use-in-production")
     monkeypatch.setenv("SKIP_BACKGROUND_WORKERS", "true")
@@ -39,6 +53,8 @@ def app(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Flask:
 
     data_dir = temp_dir / "data"
     data_dir.mkdir()
+    # Each test gets an empty database of its own, never the real one in app/data.
+    monkeypatch.setenv("LITKEEPER_DATABASE_PATH", str(data_dir / "litkeeper.db"))
     (data_dir / "epubs").mkdir()
     (data_dir / "html").mkdir()
     (data_dir / "covers").mkdir()
@@ -46,6 +62,9 @@ def app(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Flask:
 
     import app.utils.paths as paths_module
     monkeypatch.setattr(paths_module, "get_data_directory", lambda: str(data_dir))
+    # The epub, html and cover folders are worked out from this one when they are asked for, so
+    # code that imported those helpers early also writes here, never into the real app/stories.
+    monkeypatch.setattr(paths_module, "get_stories_directory", lambda: str(data_dir))
     monkeypatch.setattr(paths_module, "get_epub_directory", lambda: str(data_dir / "epubs"))
     monkeypatch.setattr(paths_module, "get_html_directory", lambda: str(data_dir / "html"))
     monkeypatch.setattr(paths_module, "get_cover_directory", lambda: str(data_dir / "covers"))
@@ -152,3 +171,53 @@ def test_story_urls() -> dict[str, str]:
         "multi_chapter": "https://www.literotica.com/s/a-test-series-ch-01",
         "with_series": "https://www.literotica.com/s/a-series-story-pt-01"
     }
+
+
+@pytest.fixture(scope="function")
+def add_story(app: Flask):
+    """Create a story the way LitKeeper keeps one: a database record (author, category, tags) plus
+    its files in the test folders. Returns the story's id. Each test has its own database."""
+    import json as _json
+    from datetime import datetime as _dt
+    from app.models import Story, Author, Category, Tag, StoryFormat, db
+    from app.utils import paths as _paths
+
+    def _add(title: str = 'Test Story', author: str = 'Test Author', category: str | None = None,
+             tags: tuple = (), formats: tuple = ('epub', 'json'), created_at=None, chapters=None,
+             filename_base: str | None = None, **fields) -> int:
+        with app.app_context():
+            author_row = Author.query.filter_by(name=author).first() or Author(name=author)
+            db.session.add(author_row)
+            category_row = None
+            if category:
+                slug = category.lower().replace(' ', '-')
+                category_row = Category.query.filter_by(name=category).first() or Category(name=category, slug=slug)
+                db.session.add(category_row)
+            tag_rows = []
+            for name in tags:
+                tag = Tag.query.filter_by(name=name).first() or Tag(name=name, slug=name.lower().replace(' ', '-'))
+                db.session.add(tag)
+                tag_rows.append(tag)
+            base = filename_base or title.lower().replace(' ', '-')
+            story = Story(title=title, author=author_row, category=category_row, filename_base=base, **fields)
+            story.tags = tag_rows
+            if created_at:
+                story.created_at = created_at
+            db.session.add(story)
+            db.session.flush()
+            for kind in formats:
+                if kind == 'epub':
+                    path = os.path.join(_paths.get_epub_directory(), f'{story.id}_{base}.epub')
+                    Path(path).write_bytes(b'fake epub')
+                else:
+                    path = os.path.join(_paths.get_html_directory(), f'{story.id}_{base}.json')
+                    data = {'title': title, 'author': author, 'category': category, 'tags': list(tags),
+                            'chapters': chapters if chapters is not None else
+                            [{'number': 1, 'title': title, 'paragraphs': ['First paragraph.', 'Second paragraph.']}]}
+                    Path(path).write_text(_json.dumps(data), encoding='utf-8')
+                db.session.add(StoryFormat(story_id=story.id, format_type=kind, file_path=path,
+                                           file_size=os.path.getsize(path)))
+            db.session.commit()
+            return story.id
+
+    return _add

@@ -123,7 +123,7 @@ class TestDownloadEndpoint:
 
         assert response.status_code == 400
         data = response.get_json()
-        assert data['success'] == 'false'
+        assert data['success'] is False  # Errors return a real boolean; successful downloads keep the documented "true".
         assert 'url' in data['message'].lower()
 
     def test_download_validation_error_invalid_domain(self, client: FlaskClient) -> None:
@@ -135,7 +135,7 @@ class TestDownloadEndpoint:
 
         assert response.status_code == 400
         data = response.get_json()
-        assert data['success'] == 'false'
+        assert data['success'] is False  # Errors return a real boolean; successful downloads keep the documented "true".
 
     def test_download_validation_error_invalid_format(self, client: FlaskClient) -> None:
         """Invalid format returns 400 validation error."""
@@ -149,45 +149,29 @@ class TestDownloadEndpoint:
 
         assert response.status_code == 400
         data = response.get_json()
-        assert data['success'] == 'false'
+        assert data['success'] is False  # Errors return a real boolean; successful downloads keep the documented "true".
 
-    def test_download_wait_false_async(self, client: FlaskClient) -> None:
-        """wait=false triggers background processing."""
-        with patch('app.blueprints.api.routes.threading.Thread') as mock_thread:
-            mock_thread_instance = MagicMock()
-            mock_thread.return_value = mock_thread_instance
+    def test_download_wait_false_async(self, app: Flask, client: FlaskClient) -> None:
+        """wait=false adds the story to the download queue and wakes the queue worker."""
+        app.download_worker = MagicMock()
+        response = client.post('/api/download', json={'url': 'https://www.literotica.com/s/test', 'wait': False})
 
-            response = client.post(
-                '/api/download',
-                json={
-                    'url': 'https://www.literotica.com/s/test',
-                    'wait': False
-                }
-            )
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert 'queue' in data['message'].lower()
+        assert data['queue_item']['url'] == 'https://www.literotica.com/s/test'
+        app.download_worker.wake.assert_called_once()
 
-            assert response.status_code == 200
-            data = response.get_json()
-            assert data['success'] == 'true'
-            assert 'background' in data['message'].lower()
-            mock_thread_instance.start.assert_called_once()
-
-    def test_download_wait_string_parsing(self, client: FlaskClient) -> None:
+    def test_download_wait_string_parsing(self, app: Flask, client: FlaskClient) -> None:
         """wait parameter as string 'false' is parsed correctly."""
-        with patch('app.blueprints.api.routes.threading.Thread') as mock_thread:
-            mock_thread_instance = MagicMock()
-            mock_thread.return_value = mock_thread_instance
+        app.download_worker = MagicMock()
+        with patch('app.blueprints.api.routes.download_story_and_create_files') as download_now:
+            response = client.post('/api/download', json={'url': 'https://www.literotica.com/s/test', 'wait': 'false'})
 
-            response = client.post(
-                '/api/download',
-                json={
-                    'url': 'https://www.literotica.com/s/test',
-                    'wait': 'false'
-                }
-            )
-
-            assert response.status_code == 200
-            data = response.get_json()
-            assert 'background' in data['message'].lower()
+        assert response.status_code == 200
+        assert 'queue' in response.get_json()['message'].lower()
+        download_now.assert_not_called()
 
     def test_download_get_method_with_params(self, client: FlaskClient) -> None:
         """GET method parses query parameters correctly."""
@@ -218,118 +202,47 @@ class TestLibraryEndpoint:
         assert isinstance(data['stories'], list)
         assert len(data['stories']) == 0
 
-    def test_library_get_with_epub_only(self, client: FlaskClient, app: Flask, temp_dir: Path) -> None:
-        """Library with EPUB file only."""
-        with app.app_context():
-            from app.utils import get_epub_directory
-            epub_dir = get_epub_directory()
+    def test_library_get_with_epub_only(self, client: FlaskClient, add_story) -> None:
+        """A story saved as EPUB only."""
+        add_story('Test Story', formats=('epub',))
+        data = client.get('/api/library').get_json()
+        assert len(data['stories']) == 1
+        assert data['stories'][0]['filename_base'] == 'test-story'
+        assert data['stories'][0]['formats'] == ['epub']
 
-            test_epub = Path(epub_dir) / "test-story.epub"
-            test_epub.write_text("fake epub content")
+    def test_library_get_with_json_metadata(self, client: FlaskClient, add_story) -> None:
+        """Title, author, category and tags come from the story's record."""
+        add_story('Test Story Title', author='Test Author', category='Romance', tags=('love', 'drama'))
+        story = client.get('/api/library').get_json()['stories'][0]
+        assert story['title'] == 'Test Story Title'
+        assert story['author'] == 'Test Author'
+        assert story['category'] == 'Romance'
+        assert sorted(story['tags']) == ['drama', 'love']
+        assert story['cover'] == f"{story['id']}_test-story-title.jpg"
 
-            response = client.get('/api/library')
-
-            assert response.status_code == 200
-            data = response.get_json()
-            assert len(data['stories']) == 1
-            assert data['stories'][0]['filename_base'] == 'test-story'
-            assert 'epub' in data['stories'][0]['formats']
-
-    def test_library_get_with_json_metadata(self, client: FlaskClient, app: Flask) -> None:
-        """Library reads JSON metadata for display info."""
-        with app.app_context():
-            from app.utils import get_html_directory
-            html_dir = get_html_directory()
-
-            json_path = Path(html_dir) / "test-story.json"
-            json_path.write_text(json.dumps({
-                'title': 'Test Story Title',
-                'author': 'Test Author',
-                'category': 'Romance',
-                'tags': ['love', 'drama'],
-                'cover': 'test-story.jpg'
-            }))
-
-            response = client.get('/api/library')
-
-            assert response.status_code == 200
-            data = response.get_json()
-            assert len(data['stories']) == 1
-            story = data['stories'][0]
-            assert story['title'] == 'Test Story Title'
-            assert story['author'] == 'Test Author'
-            assert story['category'] == 'Romance'
-            assert story['tags'] == ['love', 'drama']
-            assert story['cover'] == 'test-story.jpg'
-
-    def test_library_json_structure(self, client: FlaskClient, app: Flask) -> None:
+    def test_library_json_structure(self, client: FlaskClient, add_story) -> None:
         """Library JSON has correct structure."""
-        with app.app_context():
-            from app.utils import get_epub_directory, get_html_directory
+        add_story('Story', author='Author')
+        story = client.get('/api/library').get_json()['stories'][0]
+        for key in ('filename_base', 'title', 'formats', 'created_at'):
+            assert key in story
+        assert isinstance(story['formats'], list)
 
-            epub_path = Path(get_epub_directory()) / "story.epub"
-            epub_path.write_text("epub")
+    def test_library_sorts_by_date_descending(self, client: FlaskClient, add_story) -> None:
+        """Newest first."""
+        from datetime import datetime
+        add_story('Old Story', created_at=datetime(2024, 1, 1))
+        add_story('New Story', created_at=datetime(2025, 1, 1))
+        data = client.get('/api/library').get_json()
+        assert [s['filename_base'] for s in data['stories']] == ['new-story', 'old-story']
 
-            json_path = Path(get_html_directory()) / "story.json"
-            json_path.write_text(json.dumps({
-                'title': 'Story',
-                'author': 'Author'
-            }))
-
-            response = client.get('/api/library')
-
-            assert response.status_code == 200
-            data = response.get_json()
-            assert 'stories' in data
-            story = data['stories'][0]
-            assert 'filename_base' in story
-            assert 'title' in story
-            assert 'formats' in story
-            assert 'created_at' in story
-            assert isinstance(story['formats'], list)
-
-    def test_library_sorts_by_date_descending(self, client: FlaskClient, app: Flask) -> None:
-        """Library returns stories sorted by creation date (newest first)."""
-        import time
-        with app.app_context():
-            from app.utils import get_epub_directory
-            epub_dir = Path(get_epub_directory())
-
-            old_story = epub_dir / "old-story.epub"
-            old_story.write_text("old")
-
-            time.sleep(0.1)
-
-            new_story = epub_dir / "new-story.epub"
-            new_story.write_text("new")
-
-            response = client.get('/api/library')
-
-            data = response.get_json()
-            assert len(data['stories']) == 2
-            assert data['stories'][0]['filename_base'] == 'new-story'
-            assert data['stories'][1]['filename_base'] == 'old-story'
-
-    def test_library_handles_both_formats(self, client: FlaskClient, app: Flask) -> None:
-        """Library shows story with both EPUB and HTML formats."""
-        with app.app_context():
-            from app.utils import get_epub_directory, get_html_directory
-
-            epub_path = Path(get_epub_directory()) / "dual-format.epub"
-            epub_path.write_text("epub")
-
-            json_path = Path(get_html_directory()) / "dual-format.json"
-            json_path.write_text(json.dumps({'title': 'Dual Format Story'}))
-
-            response = client.get('/api/library')
-
-            data = response.get_json()
-            assert len(data['stories']) == 1
-            story = data['stories'][0]
-            assert 'epub' in story['formats']
-            assert 'html' in story['formats']
-            assert 'epub_file' in story
-            assert 'html_file' in story
+    def test_library_handles_both_formats(self, client: FlaskClient, add_story) -> None:
+        """A story with both EPUB and the reader's HTML/JSON file."""
+        add_story('Dual Format Story', formats=('epub', 'json'))
+        story = client.get('/api/library').get_json()['stories'][0]
+        assert sorted(story['formats']) == ['epub', 'json']
+        assert story['epub_file'].endswith('_dual-format-story.epub')
+        assert story['html_file'] == f"{story['id']}_dual-format-story.html"
 
 
 @pytest.mark.integration

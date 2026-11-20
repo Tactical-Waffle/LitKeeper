@@ -198,7 +198,8 @@ def index_story(story_id: int) -> bool:
         # doesn't fire — indexing must not look like a content change to clients.
         db.session.execute(
             text("UPDATE stories SET content_indexed_at = :ts WHERE id = :sid"),
-            {"ts": datetime.utcnow(), "sid": story_id},
+            # As text in the form SQLite's old default date adapter wrote (deprecated in Python 3.12).
+            {"ts": datetime.utcnow().isoformat(' '), "sid": story_id},
         )
         db.session.commit()
         return True
@@ -236,8 +237,8 @@ def _needs_reindex(story_id: int, filename_base: str, indexed_at, updated_at) ->
         mtime = os.path.getmtime(json_path)
     except OSError:
         return False
-    from datetime import datetime
-    return indexed_at < datetime.utcfromtimestamp(mtime)
+    from datetime import datetime, timezone
+    return indexed_at < datetime.fromtimestamp(mtime, timezone.utc).replace(tzinfo=None)
 
 
 def reindex_stale(limit: Optional[int] = None) -> dict:

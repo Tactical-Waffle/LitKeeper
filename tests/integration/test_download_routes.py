@@ -90,9 +90,10 @@ class TestDownloadFile:
 
     def test_download_absolute_path_blocked(self, client: FlaskClient) -> None:
         """Absolute paths are blocked."""
-        response = client.get('/download//etc/passwd')
-
+        # Flask first redirects the doubled slash to /download/etc/passwd (308); that must not serve the file.
+        response = client.get('/download//etc/passwd', follow_redirects=True)
         assert response.status_code == 404
+        assert b'root:' not in response.data
 
     def test_download_invalid_extension_rejected(self, client: FlaskClient) -> None:
         """Invalid file extensions return 404."""

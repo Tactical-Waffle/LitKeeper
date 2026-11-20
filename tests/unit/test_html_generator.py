@@ -56,7 +56,7 @@ class TestCreateHtmlFile:
 
     def test_html_chapter_parsing(self, temp_dir: Path) -> None:
         """Chapters are extracted correctly."""
-        content = "Intro text.\n\nChapter 1\n\nFirst chapter content.\n\nChapter 2\n\nSecond chapter content."
+        content = "Intro text.\x1eCHAPTER:1\x1eChapter 1\n\nFirst chapter content.\x1eCHAPTER:2\x1eChapter 2\n\nSecond chapter content."
 
         with patch('app.services.html_generator.generate_cover_image'):
             with patch('app.services.html_generator.send_notification'):
@@ -77,7 +77,7 @@ class TestCreateHtmlFile:
 
     def test_html_paragraph_splitting(self, temp_dir: Path) -> None:
         """Paragraphs are split into array."""
-        content = "Intro.\n\nChapter 1\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph."
+        content = "Intro.\x1eCHAPTER:1\x1eChapter 1\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph."
 
         with patch('app.services.html_generator.generate_cover_image'):
             with patch('app.services.html_generator.send_notification'):
@@ -121,7 +121,7 @@ class TestCreateHtmlFile:
                 json_path = create_html_file(
                     story_title="Unicode 测试 Story",
                     story_author="作者 Author",
-                    story_content="Content with unicode: 你好世界\n\nChapter 1\n\nMore unicode: こんにちは",
+                    story_content="Content with unicode: 你好世界\x1eCHAPTER:1\x1eChapter 1\n\nMore unicode: こんにちは",
                     output_directory=str(temp_dir)
                 )
 
@@ -152,7 +152,7 @@ class TestCreateHtmlFile:
         """Cover image generation is called."""
         with patch('app.services.html_generator.generate_cover_image') as mock_gen:
             with patch('app.services.html_generator.send_notification'):
-                def fake_cover(title, author, path):
+                def fake_cover(title, author, path, **options):
                     Path(path).write_bytes(b'\xFF\xD8\xFF\xE0')
 
                 mock_gen.side_effect = fake_cover
@@ -234,7 +234,7 @@ class TestCreateHtmlFile:
 
     def test_html_chapter_number_set(self, temp_dir: Path) -> None:
         """Chapter numbers are set correctly."""
-        content = "Intro.\n\nChapter One\n\nContent 1.\n\nChapter Two\n\nContent 2."
+        content = "Intro.\x1eCHAPTER:1\x1eChapter One\n\nContent 1.\x1eCHAPTER:2\x1eChapter Two\n\nContent 2."
 
         with patch('app.services.html_generator.generate_cover_image'):
             with patch('app.services.html_generator.send_notification'):
@@ -253,7 +253,7 @@ class TestCreateHtmlFile:
 
     def test_html_whitespace_stripped_from_paragraphs(self, temp_dir: Path) -> None:
         """Whitespace is stripped from paragraphs."""
-        content = "Intro.\n\nChapter 1\n\n  Paragraph with leading space.  \n\n  Another paragraph.  "
+        content = "Intro.\x1eCHAPTER:1\x1eChapter 1\n\n  Paragraph with leading space.  \n\n  Another paragraph.  "
 
         with patch('app.services.html_generator.generate_cover_image'):
             with patch('app.services.html_generator.send_notification'):

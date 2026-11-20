@@ -163,24 +163,9 @@ class TestWorkerPacing:
 
 
 @pytest.fixture
-def story(app: Flask):
-    from app.models import Story, ReadingProgress, db
-    with app.app_context():
-        story = Story.query.first()
-        if not story:
-            pytest.skip('No story in the test database')
-        progress = ReadingProgress.query.filter_by(story_id=story.id).first()
-        before = (progress.is_completed, progress.last_read_at) if progress else None
-        story_id, in_queue = story.id, story.in_queue
-    yield story_id
-    with app.app_context():
-        progress = ReadingProgress.query.filter_by(story_id=story_id).first()
-        if before is None and progress:
-            db.session.delete(progress)
-        elif progress:
-            progress.is_completed, progress.last_read_at = before
-        db.session.get(Story, story_id).in_queue = in_queue
-        db.session.commit()
+def story(add_story):
+    """A story of this test's own, with text to read (each test has its own database)."""
+    return add_story('Reader Test Story', author='Reader Test Author', category='Romance')
 
 
 @pytest.mark.integration

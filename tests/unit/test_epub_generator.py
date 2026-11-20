@@ -193,7 +193,7 @@ class TestCreateEpubFile:
         with patch('app.services.epub_generator.generate_cover_image') as mock_gen:
             with patch('app.services.epub_generator.send_notification'):
                 with patch('app.services.epub_generator.get_cover_directory', return_value=str(temp_dir)):
-                    def fake_cover(title, author, path):
+                    def fake_cover(title, author, path, **options):
                         Path(path).write_bytes(b'\xFF\xD8\xFF\xE0')
 
                     mock_gen.side_effect = fake_cover

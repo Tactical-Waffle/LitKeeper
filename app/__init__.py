@@ -130,7 +130,8 @@ def create_app() -> Flask:
     os.makedirs(os.path.join(stories_directory, 'html'), exist_ok=True)
     os.makedirs(os.path.join(stories_directory, 'covers'), exist_ok=True)
 
-    database_path = os.path.join(data_directory, 'litkeeper.db')
+    # LITKEEPER_DATABASE_PATH lets the tests use a database of their own.
+    database_path = os.getenv('LITKEEPER_DATABASE_PATH') or os.path.join(data_directory, 'litkeeper.db')
 
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{database_path}'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
