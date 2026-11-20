@@ -8,6 +8,16 @@ from sqlalchemy import desc, and_, not_
 
 queue = Blueprint('queue', __name__, url_prefix='/queue')
 
+
+@queue.app_context_processor
+def _download_queue_active() -> dict:
+    """The number on the header's Queue button: stories waiting or downloading now."""
+    try:
+        count = DownloadQueueItem.query.filter(DownloadQueueItem.status.in_(('pending', 'processing'))).count()
+    except Exception:
+        count = 0
+    return {'download_queue_active': count}
+
 def _visible_items_query():
     """Items shown in the queue list — excludes skipped duplicates and completed author scans."""
     return DownloadQueueItem.query.filter(

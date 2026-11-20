@@ -31,7 +31,7 @@ def get_stories_page(
     page: int = 1,
     per_page: int = 40,
     search: str = '',
-    category: str = 'all',
+    category='all',
     sort_by: str = 'date',
     sort_order: str = 'desc',
     queue_only: bool = False,
@@ -40,42 +40,66 @@ def get_stories_page(
     max_pages: int = 0,
     source: str = 'all',
     user_rating: str = '',
+    max_community_score: float = 0.0,
+    read_status: str = '',
 ) -> Tuple[List[Dict], int]:
-    """Return (page_stories, total_count). Uses DB-level ops when search is empty."""
-    from app.models import Story, Category, db
-    from sqlalchemy import asc, desc
+    """Return (page_stories, total_count). Uses DB-level ops when search is empty.
+
+    category: one name, 'all', 'uncategorized', or a list of these (any of them matches).
+    user_rating: '1'–'5' (at least), 'below-2'–'below-5' (rated, fewer stars), 'unrated' or ''.
+    read_status: 'read', 'unread' (not finished), 'reading' (started, not finished) or ''.
+    """
+    from app.models import Story, Category, ReadingProgress, db
+    from sqlalchemy import asc, desc, or_, select
 
     # author/category sort require a join that conflicts with the eager-loaded joins;
     # fall back to Python sort for those two cases only.
     PYTHON_SORT_FIELDS = {'author', 'category'}
     use_python_sort = sort_by in PYTHON_SORT_FIELDS
 
-    def _apply_user_rating_filter(query):
-        if user_rating == 'unrated':
-            return query.filter(Story.rating.is_(None))
-        if user_rating in ('1', '2', '3', '4', '5'):
-            return query.filter(Story.rating >= int(user_rating))
-        return query
+    categories = [c for c in ([category] if isinstance(category, str) else list(category or []))
+                  if c and c != 'all']
 
-    if search or use_python_sort:
-        query = Story.query
-        if category and category not in ('all', ''):
-            if category == 'uncategorized':
-                query = query.filter(Story.category_id.is_(None))
-            else:
-                query = query.join(Category, Story.category_id == Category.id).filter(Category.name == category)
+    def _apply_filters(query):
+        if categories:
+            names = [c for c in categories if c != 'uncategorized']
+            conditions = []
+            if 'uncategorized' in categories:
+                conditions.append(Story.category_id.is_(None))
+            if names:
+                conditions.append(Story.category_id.in_(select(Category.id).where(Category.name.in_(names))))
+            query = query.filter(or_(*conditions))
         if queue_only:
             query = query.filter(Story.in_queue == True)  # noqa: E712
         if min_community_score > 0:
             query = query.filter(Story.literotica_score >= min_community_score)
+        if max_community_score > 0:
+            query = query.filter(Story.literotica_score < max_community_score)
         if min_pages > 0:
             query = query.filter(Story.literotica_page_count >= min_pages)
         if max_pages > 0:
             query = query.filter(Story.literotica_page_count <= max_pages)
         if source and source != 'all':
             query = query.filter(Story.source_type == source)
-        query = _apply_user_rating_filter(query)
+        if user_rating == 'unrated':
+            query = query.filter(Story.rating.is_(None))
+        elif user_rating in ('1', '2', '3', '4', '5'):
+            query = query.filter(Story.rating >= int(user_rating))
+        elif user_rating.startswith('below-') and user_rating[6:] in ('2', '3', '4', '5'):
+            query = query.filter(Story.rating.isnot(None), Story.rating < int(user_rating[6:]))
+        finished = select(ReadingProgress.story_id).where(ReadingProgress.is_completed == True)  # noqa: E712
+        if read_status == 'read':
+            query = query.filter(Story.id.in_(finished))
+        elif read_status == 'unread':
+            query = query.filter(Story.id.notin_(finished))
+        elif read_status == 'reading':
+            started = select(ReadingProgress.story_id).where(
+                ReadingProgress.is_completed != True, ReadingProgress.percentage > 0)  # noqa: E712
+            query = query.filter(Story.id.in_(started))
+        return query
 
+    if search or use_python_sort:
+        query = _apply_filters(Story.query)
         all_stories = [s.to_library_dict() for s in query.all()]
 
         if search:
@@ -118,8 +142,8 @@ def get_stories_page(
         else:
             def _sort_key(story: dict) -> tuple:
                 if sort_by == 'author':
-                    return (story.get('author', '').lower(),)
-                return (story.get('category', '').lower(),)
+                    return ((story.get('author') or '').lower(),)
+                return ((story.get('category') or '').lower(),)
             all_stories.sort(key=_sort_key, reverse=(sort_order == 'desc'))
 
         total = len(all_stories)
@@ -127,26 +151,7 @@ def get_stories_page(
         return all_stories[start:start + per_page], total
 
     # Full DB-level filtering + sorting + pagination
-    query = Story.query
-
-    if category and category not in ('all', ''):
-        if category == 'uncategorized':
-            query = query.filter(Story.category_id.is_(None))
-        else:
-            query = query.join(Category, Story.category_id == Category.id).filter(Category.name == category)
-
-    if queue_only:
-        query = query.filter(Story.in_queue == True)  # noqa: E712
-
-    if min_community_score > 0:
-        query = query.filter(Story.literotica_score >= min_community_score)
-    if min_pages > 0:
-        query = query.filter(Story.literotica_page_count >= min_pages)
-    if max_pages > 0:
-        query = query.filter(Story.literotica_page_count <= max_pages)
-    if source and source != 'all':
-        query = query.filter(Story.source_type == source)
-    query = _apply_user_rating_filter(query)
+    query = _apply_filters(Story.query)
 
     col_map = {
         'date': Story.created_at,

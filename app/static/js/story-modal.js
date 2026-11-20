@@ -30,7 +30,6 @@ window.resetReadingProgress = async function(storyId) {
 function _buildLibraryParams() {
   const params = new URLSearchParams();
   const searchInput = document.getElementById('searchInput');
-  const categoryFilter = document.getElementById('categoryFilter');
   const sortBy = document.getElementById('sortBy');
   const sortOrderToggle = document.getElementById('sortOrderToggle');
   const minScoreFilter = document.getElementById('minScoreFilter');
@@ -38,7 +37,8 @@ function _buildLibraryParams() {
   const sourceFilter = document.getElementById('sourceFilter');
   const userRatingFilter = document.getElementById('userRatingFilter');
   if (searchInput) params.append('search', searchInput.value);
-  if (categoryFilter) params.append('category', categoryFilter.value);
+  // Categories: any number of ticked boxes (none means every category).
+  document.querySelectorAll('.category-filter-box:checked').forEach(box => params.append('category', box.value));
   if (sortBy) params.append('sort_by', sortBy.value);
   if (sortOrderToggle) params.append('sort_order', sortOrderToggle.value);
   if (minScoreFilter && minScoreFilter.value) params.append('min_community_score', minScoreFilter.value);
@@ -46,6 +46,8 @@ function _buildLibraryParams() {
   if (pageLengthFilter && pageLengthFilter.dataset.maxPages) params.append('max_pages', pageLengthFilter.dataset.maxPages);
   if (sourceFilter && sourceFilter.value) params.append('source', sourceFilter.value);
   if (userRatingFilter && userRatingFilter.value) params.append('user_rating', userRatingFilter.value);
+  const readStatusFilter = document.getElementById('readStatusFilter');
+  if (readStatusFilter && readStatusFilter.value) params.append('read_status', readStatusFilter.value);
   const queueOnlyInput = document.getElementById('queueOnlyInput');
   if (queueOnlyInput && queueOnlyInput.value === 'true') params.append('queue_only', 'true');
   return params;
@@ -1246,3 +1248,42 @@ document.body.addEventListener('coverRegenerated', function(evt) {
   };
 })();
 
+
+
+// Story details: the cover, as large as the window allows, over everything. Click, tap or Escape closes it.
+function openCoverViewer(src, alt) {
+  if (!src) return;
+  closeCoverViewer();
+  const overlay = document.createElement('div');
+  overlay.id = 'coverViewer';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', alt ? `Cover of ${alt}` : 'Cover');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);display:flex;' +
+    'align-items:center;justify-content:center;cursor:zoom-out;';
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = alt || '';
+  // Fill the window's width or height (whichever runs out first), keeping the picture's shape.
+  img.style.cssText = 'width:100vw;height:100vh;object-fit:contain;display:block;';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.setAttribute('aria-label', 'Close');
+  close.textContent = '×';
+  close.style.cssText = 'position:fixed;top:max(env(safe-area-inset-top,0px),.5rem);right:.75rem;width:2.5rem;height:2.5rem;' +
+    'border-radius:9999px;background:rgba(255,255,255,.15);color:#fff;font-size:1.75rem;line-height:1;cursor:pointer;';
+  overlay.append(img, close);
+  overlay.addEventListener('click', e => { e.stopPropagation(); closeCoverViewer(); });
+  document.body.appendChild(overlay);
+  document.addEventListener('keydown', _coverViewerKey, true);
+  close.focus();
+}
+
+function closeCoverViewer() {
+  document.getElementById('coverViewer')?.remove();
+  document.removeEventListener('keydown', _coverViewerKey, true);
+}
+
+function _coverViewerKey(e) {
+  if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); closeCoverViewer(); }
+}

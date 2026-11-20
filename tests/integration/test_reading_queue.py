@@ -76,7 +76,7 @@ def _in_queue(app: Flask, story_id: int) -> bool:
 
 
 def _card_ids(html: bytes) -> list[int]:
-    return [int(m) for m in re.findall(rb'<div class="cursor-pointer"\s+data-story-id="(\d+)"', html)]
+    return [int(m) for m in re.findall(rb'<div class="story-card cursor-pointer"\s+data-story-id="(\d+)"', html)]
 
 
 class TestQueueToggleApi:

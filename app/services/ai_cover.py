@@ -50,7 +50,7 @@ LETTERING = {
 }
 DEFAULTS = {
     'api_key': '', 'text_model': DEFAULT_TEXT_MODEL, 'image_model': DEFAULT_IMAGE_MODEL, 'fallback_models': [],
-    'auto': False, 'story_text': 'excerpts', 'lettering': 'image', 'retry_unlettered': True, 'retry_softer': True,
+    'auto': True, 'story_text': 'excerpts', 'lettering': 'image', 'retry_unlettered': True, 'retry_softer': True,
     'parallel': 3,
 }
 PARALLEL_MAX = 5   # covers made at the same time; OpenRouter's rate limits make more pointless
@@ -69,7 +69,12 @@ def settings() -> dict:
     from app.models import AppConfig
     config = AppConfig.query.filter_by(key=KEY).first()
     value = config.get_value() if config else None
-    return {**DEFAULTS, **(value if isinstance(value, dict) else {})}
+    saved = dict(value) if isinstance(value, dict) else {}
+    # "Make an AI cover for each newly downloaded story" became on by default. Settings saved before
+    # then hold the old default (off) without anyone having chosen it, so that value is not used.
+    if not saved.get('auto_chosen'):
+        saved.pop('auto', None)
+    return {**DEFAULTS, **saved}
 
 
 def masked_key(key: str) -> str:
@@ -130,6 +135,8 @@ def save_settings(form: dict) -> dict:
     for flag in ('auto', 'retry_unlettered', 'retry_softer'):
         if flag in form:
             new[flag] = bool(form.get(flag))
+    if 'auto' in form:
+        new['auto_chosen'] = True
     config = AppConfig.query.filter_by(key=KEY).first()
     if not config:
         config = AppConfig(key=KEY, value_type='json', description='OpenRouter key and models for AI covers')
@@ -264,6 +271,14 @@ def _log_call(method: str, url: str, status: object, started: float, number: int
     log_api_call('OpenRouter', method, _endpoint(url), status, (time.perf_counter() - started) * 1000, number)
 
 
+def _record_call(url: str, payload: dict, ok: bool, status, result: Optional[dict] = None) -> None:
+    """Settings → AI Statistics: one finished OpenRouter call (what for, the model, its cost, whether it worked)."""
+    from . import ai_stats
+    kind = 'cover_image' if url == IMAGES else 'cover_text'
+    cost = float(((result or {}).get('usage') or {}).get('cost') or 0)
+    ai_stats.record(kind, (result or {}).get('model') or payload.get('model') or '', cost, ok, str(status))
+
+
 def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
     """One OpenRouter request, with bounded retries for rate limits and server errors.
     The API key travels in a header and is never logged."""
@@ -278,11 +293,15 @@ def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 result = json.loads(response.read().decode())
             _log_call('POST', url, 200, started, number)
+            # A picture call that returns no picture is a failure too (usually a quiet refusal).
+            usable = not result.get('error') and (url != IMAGES or bool((result.get('data') or [{}])[0].get('b64_json')))
+            _record_call(url, payload, usable, 200 if usable else 'no usable answer', result)
             if result.get('error'):
                 raise ValueError(f"OpenRouter: {result['error'].get('message', 'request failed')}")
             return result
         except urllib.error.HTTPError as error:
             _log_call('POST', url, error.code, started, number)
+            _record_call(url, payload, False, error.code)
             detail = ''
             try:
                 detail = json.loads(error.read().decode()).get('error', {}).get('message', '')
@@ -298,6 +317,7 @@ def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
             raise ValueError(f'OpenRouter error {error.code}{": " + detail if detail else ""}')
         except (urllib.error.URLError, TimeoutError) as error:
             _log_call('POST', url, 'unreachable', started, number)
+            _record_call(url, payload, False, 'unreachable')
             if attempt < 2:
                 time.sleep(10 * (attempt + 1))
                 continue

@@ -119,13 +119,6 @@ if (sessionStorage.getItem('syncBannerDismissed') === 'true') {
         class="btn-primary w-full sm:w-auto sm:px-14">
         Download
       </button>
-      <a href="/queue/" hx-boost="false"
-        class="hidden sm:inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors whitespace-nowrap">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
-        </svg>
-        Download History
-      </a>
       <a href="/browse" hx-boost="false"
         class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors whitespace-nowrap">
         <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -646,7 +639,7 @@ function toggleAddStories() {
              hx-get="/library/filter"
              hx-trigger="keyup changed delay:300ms"
              hx-target="#library-content"
-             hx-include="[name='category'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
+             hx-include="[name='category'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='read_status'], [name='queue_only']"
              style="height: 2.5rem; width: 100%"
              class="w-full h-10 px-4 pl-10 rounded-lg border border-slate-200 dark:border-gray-700
                     bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm
@@ -681,23 +674,23 @@ function toggleAddStories() {
         <div id="filtersDropdownPanel"
              class="library-dropdown-panel invisible opacity-0 pointer-events-none absolute z-20 mt-2 left-0 sm:right-0 sm:left-auto w-64 p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-gray-800 shadow-lg space-y-3">
           <div>
-            <label for="categoryFilter" class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Category</label>
-            <select id="categoryFilter"
-                    name="category"
-                    data-requires-online
-                    hx-get="/library/filter"
-                    hx-trigger="change"
-                    hx-target="#library-content"
-                    hx-include="[name='search'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
-                    class="w-full h-10 pl-3 pr-8 rounded-lg border border-slate-200 dark:border-gray-700
-                           bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm
-                           focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200">
-              <option value="all">All Categories</option>
-              <option value="uncategorized">Uncategorized</option>
+            <div class="flex items-center justify-between mb-1">
+              <span class="block text-xs font-medium text-gray-500 dark:text-gray-400">Categories</span>
+              <button type="button" onclick="setCategoryFilters([])" class="text-xs text-primary hover:underline">Any</button>
+            </div>
+            <div id="categoryFilter" role="group" aria-label="Categories (pick any number)"
+                 class="max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-gray-700 p-1.5 space-y-0.5">
+              <label class="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-slate-50 dark:hover:bg-gray-700 text-sm text-gray-700 dark:text-gray-200 cursor-pointer">
+                <input type="checkbox" name="category" value="uncategorized" class="category-filter-box rounded border-slate-300 dark:border-slate-600 text-primary" onchange="onCategoryFilterChange()">
+                <span class="italic">Uncategorized</span>
+              </label>
               {% for category in categories %}
-              <option value="{{ category }}">{{ category }}</option>
+              <label class="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-slate-50 dark:hover:bg-gray-700 text-sm text-gray-700 dark:text-gray-200 cursor-pointer">
+                <input type="checkbox" name="category" value="{{ category }}" class="category-filter-box rounded border-slate-300 dark:border-slate-600 text-primary" onchange="onCategoryFilterChange()">
+                <span class="truncate">{{ category }}</span>
+              </label>
               {% endfor %}
-            </select>
+            </div>
           </div>
           <div>
             <label for="sourceFilter" class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Source</label>
@@ -707,7 +700,7 @@ function toggleAddStories() {
                     hx-get="/library/filter"
                     hx-trigger="change"
                     hx-target="#library-content"
-                    hx-include="[name='search'], [name='category'], [name='sort_by'], [name='sort_order'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
+                    hx-include="[name='search'], [name='category'], [name='sort_by'], [name='sort_order'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='read_status'], [name='queue_only']"
                     class="w-full h-10 pl-3 pr-8 rounded-lg border border-slate-200 dark:border-gray-700
                            bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm
                            focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
@@ -728,11 +721,15 @@ function toggleAddStories() {
                            focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
                     title="Filter by your rating">
               <option value="">All Ratings</option>
-              <option value="5">★★★★★</option>
-              <option value="4">★★★★+</option>
-              <option value="3">★★★+</option>
-              <option value="2">★★+</option>
-              <option value="1">★+</option>
+              <option value="5">★★★★★ only</option>
+              <option value="4">★★★★ or more</option>
+              <option value="3">★★★ or more</option>
+              <option value="2">★★ or more</option>
+              <option value="1">Any rating (★ or more)</option>
+              <option value="below-5">Fewer than ★★★★★</option>
+              <option value="below-4">Fewer than ★★★★</option>
+              <option value="below-3">Fewer than ★★★</option>
+              <option value="below-2">★ only</option>
               <option value="unrated">Unrated</option>
             </select>
           </div>
@@ -747,10 +744,29 @@ function toggleAddStories() {
                            focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
                     title="Filter by minimum community score">
               <option value="">All Scores</option>
-              <option value="4.0">★ 4.0+</option>
-              <option value="4.5">★ 4.5+</option>
-              <option value="4.7">★ 4.7+</option>
-              <option value="4.9">★ 4.9+</option>
+              <option value="4.9">★ 4.9 or more</option>
+              <option value="4.7">★ 4.7 or more</option>
+              <option value="4.5">★ 4.5 or more</option>
+              <option value="4.0">★ 4.0 or more</option>
+              <option value="below-4.5">Below ★ 4.5</option>
+              <option value="below-4.0">Below ★ 4.0</option>
+              <option value="below-3.5">Below ★ 3.5</option>
+            </select>
+          </div>
+          <div>
+            <label for="readStatusFilter" class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Read</label>
+            <select id="readStatusFilter"
+                    name="read_status"
+                    data-requires-online
+                    onchange="window._onFilterSelectChange(this)"
+                    class="w-full h-10 pl-3 pr-8 rounded-lg border border-slate-200 dark:border-gray-700
+                           bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm
+                           focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
+                    title="Filter by whether you have read the story">
+              <option value="">Read and unread</option>
+              <option value="unread">Unread</option>
+              <option value="reading">Started, not finished</option>
+              <option value="read">Read</option>
             </select>
           </div>
           <div>
@@ -770,8 +786,20 @@ function toggleAddStories() {
               <option value="long">Long (&gt;50 pages)</option>
             </select>
           </div>
+          <button type="button" onclick="clearLibraryFilters()"
+                  class="w-full h-9 rounded-lg border border-slate-200 dark:border-gray-700 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-slate-50 dark:hover:bg-gray-700">
+            Clear Filters
+          </button>
         </div>
       </div>
+
+      <button type="button" id="clearFiltersBtn" onclick="clearLibraryFilters()"
+              class="hidden h-10 px-3 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800
+                     text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-slate-50 dark:hover:bg-gray-700
+                     items-center justify-center gap-1.5 whitespace-nowrap" title="Clear the search and all filters">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        Clear Filters
+      </button>
 
       {# Sort dropdown #}
       <div class="relative flex-1 sm:flex-none">
@@ -800,7 +828,7 @@ function toggleAddStories() {
                     hx-get="/library/filter"
                     hx-trigger="change"
                     hx-target="#library-content"
-                    hx-include="[name='search'], [name='category'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
+                    hx-include="[name='search'], [name='category'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='read_status'], [name='queue_only']"
                     class="w-full h-10 pl-3 pr-8 rounded-lg border border-slate-200 dark:border-gray-700
                            bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm
                            focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200">
@@ -826,7 +854,7 @@ function toggleAddStories() {
                     hx-get="/library/filter"
                     hx-trigger="click"
                     hx-target="#library-content"
-                    hx-include="[name='search'], [name='category'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='queue_only']"
+                    hx-include="[name='search'], [name='category'], [name='sort_by'], [name='sort_order'], [name='source'], [name='min_community_score'], [name='page_length'], [name='user_rating'], [name='read_status'], [name='queue_only']"
                     class="w-full h-10 rounded-lg border border-slate-200 dark:border-gray-700
                            bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300
                            hover:bg-gray-50 dark:hover:bg-gray-700 transition-all duration-200
@@ -861,6 +889,12 @@ function toggleAddStories() {
         </button>
         <div id="viewDropdownPanel"
              class="library-dropdown-panel invisible opacity-0 pointer-events-none absolute z-20 mt-2 right-0 w-56 p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-gray-800 shadow-lg space-y-1">
+          <p class="text-xs font-medium text-gray-500 dark:text-gray-400 px-1 pb-1">Layout</p>
+          <div id="layoutOptions" class="grid grid-cols-3 gap-1 p-1 mb-2 rounded-lg bg-slate-100 dark:bg-gray-900" role="radiogroup" aria-label="Library layout">
+            <button type="button" data-layout="covers" onclick="setLibraryLayout('covers')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium">Covers</button>
+            <button type="button" data-layout="list" onclick="setLibraryLayout('list')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium">List</button>
+            <button type="button" data-layout="detail" onclick="setLibraryLayout('detail')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium">Detail</button>
+          </div>
           <p class="text-xs font-medium text-gray-500 dark:text-gray-400 px-1 pb-1">Cover size</p>
           <div id="coverSizeOptions" class="grid grid-cols-4 gap-1 p-1 mb-2 rounded-lg bg-slate-100 dark:bg-gray-900" role="radiogroup" aria-label="Cover size">
             <button type="button" data-cover-size="small" onclick="setCoverSize('small')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium" title="Small covers">S</button>
@@ -885,9 +919,9 @@ function toggleAddStories() {
             <span class="text-sm text-gray-700 dark:text-gray-200">Category</span>
           </label>
           <label class="flex items-center gap-2 px-1 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-gray-700 cursor-pointer">
-            <input type="checkbox" id="viewPageLength" onchange="setLibraryViewOption('page-length', this.checked)"
+            <input type="checkbox" id="viewWordCount" onchange="setLibraryViewOption('word-count', this.checked)"
                    class="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary">
-            <span class="text-sm text-gray-700 dark:text-gray-200">Page length</span>
+            <span class="text-sm text-gray-700 dark:text-gray-200">Word count</span>
           </label>
         </div>
       </div>
@@ -1010,12 +1044,33 @@ function toggleAddStories() {
 [data-theme="dark"] .library-view-tab:hover { color: #fff; }
 [data-theme="dark"] .library-view-tab[aria-selected="true"] { background: rgb(55 65 81); color: #fff; }
 #library.show-categories .story-category-label { display: block !important; }
-#library.show-page-length .story-page-length-label { display: block !important; }
+#library.show-word-count .story-word-count-label { display: block !important; }
 #library.show-user-rating .card-user-rating { display: inline-flex !important; }
 #library.show-community-score .card-community-score { display: inline-flex !important; }
-#library:not(.show-user-rating) .card-community-score-paren { display: none; }
-#library.show-user-rating .card-community-score-star { display: none; }
-#library:not(.show-user-rating) .card-community-score-star { display: inline; }
+/* Layouts: Covers (the grid), List (one line per story) and Detail (cover, description and tags). */
+.story-card .card-info { display: none; }
+#library[data-layout="list"] .library-grid,
+#library[data-layout="detail"] .library-grid { display: flex !important; flex-direction: column; gap: 0; }
+#library[data-layout="list"] .story-card,
+#library[data-layout="detail"] .story-card {
+  display: flex; align-items: center; gap: .85rem; padding: .5rem .25rem;
+  border-bottom: 1px solid rgb(226 232 240 / .8);
+}
+[data-theme="dark"] #library[data-layout] .story-card { border-bottom-color: rgb(55 65 81 / .7); }
+#library[data-layout="list"] .story-card:hover,
+#library[data-layout="detail"] .story-card:hover { background: rgb(248 250 252); }
+[data-theme="dark"] #library[data-layout="list"] .story-card:hover,
+[data-theme="dark"] #library[data-layout="detail"] .story-card:hover { background: rgb(31 41 55 / .6); }
+#library[data-layout="list"] .story-card-cover { width: 2.6rem; flex-shrink: 0; }
+#library[data-layout="detail"] .story-card { align-items: flex-start; padding: .75rem .25rem; }
+#library[data-layout="detail"] .story-card-cover { width: 5.5rem; flex-shrink: 0; }
+#library[data-layout="list"] .card-under,
+#library[data-layout="detail"] .card-under { display: none; }
+#library[data-layout="list"] .card-info,
+#library[data-layout="detail"] .card-info { display: block; flex: 1; }
+#library[data-layout="list"] .card-info-detail-only { display: none; }
+#library[data-layout="list"] .card-queue-badge { display: none; }
+#library[data-layout="list"] .story-select-mark { top: .1rem; left: .1rem; width: 1.1rem; height: 1.1rem; }
 </style>
 
 <script>
@@ -1070,27 +1125,89 @@ document.addEventListener('click', function(e) {
   document.querySelectorAll('.library-dropdown-panel').forEach(closeLibraryDropdownPanel);
 });
 
-function updateFiltersActiveDot() {
-  const dot = document.getElementById('filtersActiveDot');
-  if (!dot) return;
-  const category = document.getElementById('categoryFilter');
-  const source = document.getElementById('sourceFilter');
-  const minScore = document.getElementById('minScoreFilter');
-  const pageLength = document.getElementById('pageLengthFilter');
-  const userRating = document.getElementById('userRatingFilter');
-  const active = (category && category.value !== 'all') ||
-                 (source && source.value !== 'all') ||
-                 (minScore && minScore.value) ||
-                 (pageLength && pageLength.value) ||
-                 (userRating && userRating.value);
-  dot.classList.toggle('hidden', !active);
+function checkedCategoryFilters() {
+  return [...document.querySelectorAll('.category-filter-box:checked')].map(box => box.value);
 }
 
-['categoryFilter', 'sourceFilter', 'minScoreFilter', 'pageLengthFilter', 'userRatingFilter'].forEach(id => {
+function libraryFiltersActive() {
+  const value = id => (document.getElementById(id) || {}).value;
+  return checkedCategoryFilters().length > 0 ||
+         (value('sourceFilter') && value('sourceFilter') !== 'all') ||
+         !!value('minScoreFilter') || !!value('pageLengthFilter') || !!value('userRatingFilter') ||
+         !!value('readStatusFilter');
+}
+
+function updateFiltersActiveDot() {
+  const filters = libraryFiltersActive();
+  const dot = document.getElementById('filtersActiveDot');
+  if (dot) dot.classList.toggle('hidden', !filters);
+  const clear = document.getElementById('clearFiltersBtn');
+  const search = (document.getElementById('searchInput') || {}).value;
+  if (clear) {
+    clear.classList.toggle('hidden', !(filters || search));
+    clear.classList.toggle('inline-flex', !!(filters || search));
+  }
+}
+
+function setCategoryFilters(names) {
+  document.querySelectorAll('.category-filter-box').forEach(box => { box.checked = names.includes(box.value); });
+  onCategoryFilterChange();
+}
+
+function onCategoryFilterChange() {
+  // Nothing saved when no category is ticked: a saved value makes the page wait for a filtered reload.
+  const picked = checkedCategoryFilters();
+  try {
+    if (picked.length) localStorage.setItem('library_category', JSON.stringify(picked));
+    else localStorage.removeItem('library_category');
+  } catch (_) {}
+  window._onFilterSelectChange();
+}
+
+function clearLibraryFilters() {
+  const search = document.getElementById('searchInput');
+  if (search) search.value = '';
+  document.querySelectorAll('.category-filter-box').forEach(box => { box.checked = false; });
+  ['sourceFilter'].forEach(id => { const el = document.getElementById(id); if (el) el.value = 'all'; });
+  ['minScoreFilter', 'userRatingFilter', 'readStatusFilter', 'pageLengthFilter'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const length = document.getElementById('pageLengthFilter');
+  if (length) { length.dataset.minPages = ''; length.dataset.maxPages = ''; }
+  try { localStorage.removeItem('library_category'); localStorage.removeItem('library_source'); } catch (_) {}
+  window._onFilterSelectChange();
+}
+
+['sourceFilter', 'minScoreFilter', 'pageLengthFilter', 'userRatingFilter', 'readStatusFilter'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', updateFiltersActiveDot);
 });
+document.getElementById('searchInput')?.addEventListener('input', updateFiltersActiveDot);
 updateFiltersActiveDot();
+
+// --- Layout: Covers, List or Detail ---
+
+function currentLibraryLayout() {
+  let saved = null;
+  try { saved = localStorage.getItem('library_layout'); } catch (_) {}
+  return ['covers', 'list', 'detail'].includes(saved) ? saved : 'covers';
+}
+
+function applyLibraryLayout() {
+  const layout = currentLibraryLayout();
+  const library = document.getElementById('library');
+  if (library) {
+    if (layout === 'covers') library.removeAttribute('data-layout'); else library.dataset.layout = layout;
+  }
+  document.querySelectorAll('#layoutOptions [data-layout]').forEach(button =>
+    button.setAttribute('aria-checked', button.dataset.layout === layout ? 'true' : 'false'));
+}
+
+function setLibraryLayout(layout) {
+  try { localStorage.setItem('library_layout', layout); } catch (_) {}
+  applyLibraryLayout();
+}
+applyLibraryLayout();
 
 // --- View options (what shows under each cover) ---
 
@@ -1098,11 +1215,13 @@ const LIBRARY_VIEW_OPTIONS = {
   'user-rating': { key: 'library_view_user_rating', cls: 'show-user-rating', checkboxId: 'viewUserRating', default: true },
   'community-score': { key: 'library_view_community_score', cls: 'show-community-score', checkboxId: 'viewCommunityScore', default: false },
   'category': { key: 'library_view_category', cls: 'show-categories', checkboxId: 'viewCategory', default: false },
-  'page-length': { key: 'library_view_page_length', cls: 'show-page-length', checkboxId: 'viewPageLength', default: false },
+  // Replaced "Page length"; a saved choice for that carries over.
+  'word-count': { key: 'library_view_word_count', cls: 'show-word-count', checkboxId: 'viewWordCount', default: false, oldKey: 'library_view_page_length' },
 };
 
 function libraryViewOptionActive(opt) {
-  const stored = localStorage.getItem(opt.key);
+  let stored = null;
+  try { stored = localStorage.getItem(opt.key) ?? (opt.oldKey ? localStorage.getItem(opt.oldKey) : null); } catch (_) {}
   return stored === null ? opt.default : stored === '1';
 }
 

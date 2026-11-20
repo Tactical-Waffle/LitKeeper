@@ -370,8 +370,10 @@
           <div class="flex-shrink-0 w-20 h-28 rounded-lg border-2 border-white/80 dark:border-white/10 overflow-hidden bg-slate-200 dark:bg-slate-700"
                style="box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);">
             <img src="/api/story/{{ story.id }}/cover"
-                 alt=""
-                 class="w-full h-full object-cover"
+                 alt="{{ story.title }}"
+                 class="w-full h-full object-cover cursor-zoom-in"
+                 title="Show the cover full size"
+                 onclick="event.stopPropagation(); openCoverViewer(this.src, this.alt)"
                  onerror="this.style.display='none'">
           </div>
           <div class="flex-1 min-w-0">
@@ -387,7 +389,9 @@
              style="box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);">
           <img src="{{ story.cover_data_url if story.cover_data_url else '/api/story/' ~ story.id ~ '/cover' }}"
                alt="{{ story.title }}"
-               class="w-full h-full object-cover"
+               class="w-full h-full object-cover cursor-zoom-in"
+               title="Show the cover full size"
+               onclick="event.stopPropagation(); openCoverViewer(this.src, this.alt)"
                onerror="this.style.display='none'">
         </div>
         <div class="flex-1 min-w-0">

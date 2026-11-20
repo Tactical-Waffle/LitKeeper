@@ -51,7 +51,8 @@ class Story(BaseModel, TimestampMixin):
     category = db.relationship('Category', back_populates='stories', lazy='joined')
     tags = db.relationship('Tag', secondary='story_tags', back_populates='stories', lazy='subquery')
     formats = db.relationship('StoryFormat', back_populates='story', cascade='all, delete-orphan', lazy='subquery')
-    reading_progress = db.relationship('ReadingProgress', back_populates='story', uselist=False, cascade='all, delete-orphan')
+    # selectin: the library shows read status on every card, so load it for a page of stories in one query.
+    reading_progress = db.relationship('ReadingProgress', back_populates='story', uselist=False, cascade='all, delete-orphan', lazy='selectin')
     highlights = db.relationship('Highlight', back_populates='story', cascade='all, delete-orphan', lazy='dynamic')
     metadata_refresh_jobs = db.relationship('MetadataRefreshQueueItem', back_populates='story', cascade='all, delete-orphan', lazy='dynamic')
     sources = db.relationship('StorySource', back_populates='story', cascade='all, delete-orphan', order_by='StorySource.position', lazy='select')
@@ -112,6 +113,9 @@ class Story(BaseModel, TimestampMixin):
             'favorites':       self.literotica_favorites,
             'comments':        self.literotica_comments,
             'in_queue': bool(self.in_queue),
+            'is_read': bool(self.reading_progress and self.reading_progress.is_completed),
+            'read_percent': (round(self.reading_progress.percentage * 100) if self.reading_progress
+                             and isinstance(self.reading_progress.percentage, (int, float)) else None),
             'queued_at': self.queued_at.isoformat() if self.queued_at else None,
             'last_opened_at': self.last_opened_at.isoformat() if self.last_opened_at else None,
             'description': self.description,

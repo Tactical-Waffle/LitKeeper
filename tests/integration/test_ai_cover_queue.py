@@ -229,3 +229,77 @@ class TestSeveralAtOnce:
     def test_settings_page_has_the_choice(self, client: FlaskClient) -> None:
         page = client.get('/settings/').get_data(as_text=True)
         assert 'id="aiCoverParallel"' in page and '<option value="5"' in page
+
+
+@pytest.mark.integration
+class TestAutoCoverDefault:
+
+    def test_on_by_default_and_old_saved_off_is_not_a_choice(self, app) -> None:
+        from app.services import ai_cover
+        from app.models import AppConfig, db
+        with app.app_context():
+            assert ai_cover.settings()['auto'] is True
+            # Saved by an earlier build with the old default, never chosen: still on.
+            config = AppConfig(key=ai_cover.KEY, value_type='json', description='')
+            config.set_value({'api_key': 'sk-or-v1-test', 'auto': False})
+            db.session.add(config)
+            db.session.commit()
+            assert ai_cover.settings()['auto'] is True
+            # Turned off in Settings: stays off.
+            ai_cover.save_settings({'auto': False})
+            assert ai_cover.settings()['auto'] is False
+            ai_cover.save_settings({'text_model': ai_cover.DEFAULT_TEXT_MODEL})
+            assert ai_cover.settings()['auto'] is False
+
+    def test_settings_page_label(self, client) -> None:
+        assert b'Make an AI cover for each newly downloaded story' in client.get('/settings/').data
+
+
+@pytest.mark.integration
+class TestAiStatistics:
+
+    def test_calls_are_recorded_and_shown(self, app, client) -> None:
+        from app.services import ai_stats
+        import urllib.error
+
+        class Reply:
+            def __init__(self, body): self.body = body
+            def read(self): return json.dumps(self.body).encode()
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        replies = [Reply({'model': 'text/model', 'usage': {'cost': 0.0012}, 'choices': [{'message': {'content': 'x'}}]}),
+                   Reply({'usage': {'cost': 0.04}, 'data': [{'b64_json': 'AAAA'}]}),
+                   Reply({'usage': {'cost': 0}, 'data': []})]
+        with app.app_context(), patch('urllib.request.urlopen', side_effect=replies):
+            ai_cover._post(ai_cover.CHAT, {'model': 'text/model'}, 'sk-or-v1-test')
+            ai_cover._post(ai_cover.IMAGES, {'model': 'image/model'}, 'sk-or-v1-test')
+            ai_cover._post(ai_cover.IMAGES, {'model': 'image/model'}, 'sk-or-v1-test')
+        with app.app_context(), patch('urllib.request.urlopen',
+                                      side_effect=urllib.error.HTTPError('u', 402, 'no credit', {}, None)):
+            with pytest.raises(Exception):
+                ai_cover._post(ai_cover.IMAGES, {'model': 'image/model'}, 'sk-or-v1-test')
+        with app.app_context():
+            tables = ai_stats.tables()
+        kinds = {k['label']: k['cost']['today'] for k in tables['kinds']}
+        assert kinds['AI cover descriptions (text model)'] == pytest.approx(0.0012)
+        assert kinds['AI cover pictures (image model)'] == pytest.approx(0.04)
+        image = next(m for m in tables['models'] if m['model'] == 'image/model')
+        assert image['ok']['all'] == 1 and image['failed']['all'] == 2
+        assert image['success_rate'] == pytest.approx(1 / 3)
+        page = client.get('/settings/').get_data(as_text=True)
+        assert 'id="aiStats"' in page and 'AI model failures' in page and '$0.04' in page
+
+    def test_built_once_from_finished_covers(self, app) -> None:
+        from app.services import ai_stats
+        from app.utils import paths
+        folder = Path(paths.get_cover_directory()) / 'ai'
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / '1_x.art.json').write_text(json.dumps({'made': '2026-11-01T10:00:00+00:00', 'cost': 0.05,
+                                                         'text_model': 't/m', 'image_model': 'i/m'}))
+        (folder / '2_y.art.json').write_text(json.dumps({'failed': '2026-11-02T10:00:00+00:00', 'error': 'refused'}))
+        with app.app_context():
+            assert ai_stats.backfill() == 2
+            assert ai_stats.backfill() == 0
+            models = {m['model']: m for m in ai_stats.tables()['models']}
+        assert models['i/m']['cost']['all'] == pytest.approx(0.05) and models['t/m']['cost']['all'] == 0

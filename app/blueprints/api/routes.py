@@ -1743,11 +1743,17 @@ def queue_author_download() -> ResponseReturnValue:
 
 
 def _story_filter_terms() -> list[str]:
-    """Settings → Story Filter: words that select or deselect matching stories in the author window."""
-    from app.models import AppConfig
-    cfg = AppConfig.query.filter_by(key='story_filter_terms').first()
-    value = cfg.get_value() if cfg else None
-    return [str(t) for t in value if str(t).strip()] if isinstance(value, list) else []
+    """Settings → Story Filter: every term on either list, for Select matches / Deselect matches."""
+    from app.services import story_filter
+    current = story_filter.settings()
+    return list(dict.fromkeys(current['any'] + current['all']))
+
+
+def _story_filter_lists() -> dict:
+    """The author window's filter: filter_any, filter_all and filter_hide (see services/story_filter.py)."""
+    from app.services import story_filter
+    current = story_filter.settings()
+    return {'filter_any': current['any'], 'filter_all': current['all'], 'filter_hide': current['hide']}
 
 
 @api.route('/authors/preview', methods=['POST'])
@@ -1808,6 +1814,7 @@ def preview_author_stories() -> ResponseReturnValue:
             "watch_enabled": author_obj.watch_enabled if author_obj else False,
             "stories": stories,
             "filter_terms": _story_filter_terms(),
+            **_story_filter_lists(),
         })
 
     except Exception as e:

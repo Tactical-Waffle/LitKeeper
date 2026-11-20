@@ -181,13 +181,30 @@ class TestStoryFilterSetting:
 
     def test_save_and_show(self, client: FlaskClient, clean_queue) -> None:
         response = client.post('/settings/story-filter', json={'terms': 'incest\n non-consent, incest ,\n\nmind control'})
-        assert response.get_json() == {'success': True, 'terms': ['incest', 'non-consent', 'mind control']}
+        assert response.get_json()['terms'] == ['incest', 'non-consent', 'mind control']
         page = client.get('/settings/').get_data(as_text=True)
         assert 'id="storyFilterSection"' in page and 'incest\nnon-consent\nmind control' in page
 
+    def test_any_and_all_lists_and_hide(self, app: Flask, client: FlaskClient, clean_queue) -> None:
+        data = client.post('/settings/story-filter', json={'any': 'non-consent', 'all': 'taboo\ntrans', 'hide': False}).get_json()
+        assert data['success'] and data['any'] == ['non-consent'] and data['all'] == ['taboo', 'trans'] and data['hide'] is False
+        page = client.get('/settings/').get_data(as_text=True)
+        assert 'id="storyFilterAll"' in page and 'taboo\ntrans' in page and 'id="storyFilterHide"' in page
+        one = [{'url': 'https://www.literotica.com/s/x', 'title': 'X', 'is_series': False}]
+        with patch('app.services.author_scraper.fetch_author_works', return_value=one):
+            preview = client.post('/api/authors/preview', json={'author_url': 'https://www.literotica.com/authors/Someone'}).get_json()
+        assert preview['filter_any'] == ['non-consent'] and preview['filter_all'] == ['taboo', 'trans']
+        assert preview['filter_hide'] is False and preview['filter_terms'] == ['non-consent', 'taboo', 'trans']
+
+    def test_hide_is_on_by_default(self, app: Flask, clean_queue) -> None:
+        from app.services import story_filter
+        with app.app_context():
+            assert story_filter.settings() == {'any': [], 'all': [], 'hide': True}
+
     def test_limits(self, client: FlaskClient, clean_queue) -> None:
         assert client.post('/settings/story-filter', json={'terms': 'x' * 101}).status_code == 400
-        assert client.post('/settings/story-filter', json={'terms': ','.join(f't{i}' for i in range(201))}).status_code == 400
+        assert client.post('/settings/story-filter', json={'all': ','.join(f't{i}' for i in range(201))}).status_code == 400
+        assert client.post('/settings/story-filter', json={'hide': 'yes'}).status_code == 400
         assert client.post('/settings/story-filter', json={'terms': ''}).get_json()['terms'] == []
 
 

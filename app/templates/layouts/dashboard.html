@@ -42,6 +42,16 @@
         </svg>
       </button>
       {% endif %}
+      <a href="/queue/"
+         hx-boost="false"
+         class="relative hidden md:flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-all duration-200 {% if request.path.startswith('/queue') %}text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-800{% else %}text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}"
+         aria-label="Queue" title="Download queue">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+        </svg>
+        <span>Queue</span>
+        {% if download_queue_active %}<span class="min-w-[1.1rem] px-1 py-0.5 text-[10px] leading-none font-semibold rounded-full bg-primary text-white text-center">{{ download_queue_active }}</span>{% endif %}
+      </a>
       <a href="/browse"
          hx-boost="false"
          class="hidden md:flex p-2 rounded-lg transition-all duration-200 {% if request.path.startswith('/browse') %}text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-800{% else %}text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}"
@@ -246,11 +256,11 @@
 
     <a href="/queue/" hx-boost="false"
        class="{{ tab_base }} {{ tab_on if p.startswith('/queue') else tab_off }}"
-       aria-label="History">
+       aria-label="Queue">
       <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
       </svg>
-      <span>History</span>
+      <span>Queue</span>
     </a>
 
     <a href="/highlights/" hx-boost="false"

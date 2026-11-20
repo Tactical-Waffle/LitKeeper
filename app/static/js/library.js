@@ -2,24 +2,33 @@ const metadataModal = new MetadataModal();
 
 function initializeLibraryFilters() {
   const sortBy = document.getElementById('sortBy');
-  const categoryFilter = document.getElementById('categoryFilter');
   const sourceFilter = document.getElementById('sourceFilter');
   const sortOrderToggle = document.getElementById('sortOrderToggle');
 
   const savedSortBy = localStorage.getItem('library_sort_by') || 'date';
-  const savedCategory = localStorage.getItem('library_category') || 'all';
+  // Saved categories: a JSON list now; earlier builds saved one name (or "all").
+  let savedCategories = [];
+  try {
+    const raw = localStorage.getItem('library_category');
+    savedCategories = raw && raw.startsWith('[') ? JSON.parse(raw) : (raw && raw !== 'all' ? [raw] : []);
+    if (!savedCategories.length && raw !== null) localStorage.removeItem('library_category');
+  } catch (_) {}
   const savedSource = localStorage.getItem('library_source') || 'all';
   const savedSortOrder = localStorage.getItem('library_sort_order') || 'desc';
   const savedQueueOnly = localStorage.getItem('library_queue_only') === 'true';
+  if (!savedCategories.length && !localStorage.getItem('library_sort_by') && !localStorage.getItem('library_source') &&
+      !localStorage.getItem('library_sort_order') && !savedQueueOnly) {
+    const content = document.getElementById('library-content');
+    if (content) content.style.visibility = '';  // Nothing to apply: show the first page as it came.
+  }
 
   applyQueueViewUI(savedQueueOnly);
 
   if (sortBy) {
     sortBy.value = savedSortBy;
   }
-  if (categoryFilter) {
-    categoryFilter.value = savedCategory;
-  }
+  document.querySelectorAll('.category-filter-box').forEach(box => { box.checked = savedCategories.includes(box.value); });
+  if (typeof updateFiltersActiveDot === 'function') updateFiltersActiveDot();
   if (sourceFilter) {
     sourceFilter.value = savedSource;
   }
@@ -29,7 +38,7 @@ function initializeLibraryFilters() {
   }
 
   const hasSavedPreferences = localStorage.getItem('library_sort_by') ||
-                               localStorage.getItem('library_category') ||
+                               savedCategories.length ||
                                localStorage.getItem('library_source') ||
                                localStorage.getItem('library_sort_order') ||
                                savedQueueOnly;
@@ -151,12 +160,6 @@ if (sortBy) {
   });
 }
 
-const categoryFilter = document.getElementById('categoryFilter');
-if (categoryFilter) {
-  categoryFilter.addEventListener('change', function() {
-    localStorage.setItem('library_category', this.value);
-  });
-}
 
 const sourceFilter = document.getElementById('sourceFilter');
 if (sourceFilter) {

@@ -1,139 +1,86 @@
-<div class="-mx-4 divide-y divide-slate-100 dark:divide-slate-700/50">
+{# The download queue and its history, one compact line per item (two when there is progress or a problem). #}
+<div class="queue-list rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white dark:bg-gray-800 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
 
   {% if next_download_in %}
-  <p id="nextDownloadNote" class="px-4 py-2.5 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60">
+  <p id="nextDownloadNote" class="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60">
     Next download in about {{ next_download_in }} minute{{ 's' if next_download_in != 1 else '' }}.
     LitKeeper waits between downloads (Settings &rarr; Downloads).
   </p>
   {% endif %}
 
   {% for item in items %}
-  <div class="flex items-start gap-3 px-4 py-4">
+  <div class="queue-row flex items-center gap-2.5 px-3 py-1.5" data-status="{{ item.status }}">
 
-    <div class="flex-shrink-0 mt-0.5">
+    <span class="flex-shrink-0 w-4 h-4 flex items-center justify-center" title="{{ item.status | replace('_', ' ') | capitalize }}">
       {% if item.status == 'processing' %}
-      <div class="animate-spin rounded-full h-5 w-5 border-2 border-amber-200 dark:border-amber-800 border-t-amber-600 dark:border-t-amber-400"></div>
+      <span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-amber-200 dark:border-amber-800 border-t-amber-600 dark:border-t-amber-400"></span>
       {% elif item.status == 'pending' %}
-      <svg class="w-5 h-5 text-blue-500 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-      </svg>
+      <span class="w-2 h-2 rounded-full {{ 'bg-amber-500' if item.retry_in else 'bg-blue-500' }}"></span>
       {% elif item.status == 'completed' %}
-      <svg class="w-5 h-5 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 24 24">
-        <path fill-rule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z" clip-rule="evenodd"/>
-      </svg>
+      <svg class="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
       {% elif item.status == 'failed' %}
-      <svg class="w-5 h-5 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 24 24">
-        <path fill-rule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm-1.72 6.97a.75.75 0 10-1.06 1.06L10.94 12l-1.72 1.72a.75.75 0 101.06 1.06L12 13.06l1.72 1.72a.75.75 0 101.06-1.06L13.06 12l1.72-1.72a.75.75 0 10-1.06-1.06L12 10.94l-1.72-1.72z" clip-rule="evenodd"/>
-      </svg>
+      <svg class="w-4 h-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
       {% elif item.status == 'rate_limited' %}
-      <svg class="w-5 h-5 text-orange-500 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-      </svg>
+      <span class="w-2 h-2 rounded-full bg-orange-500"></span>
       {% endif %}
-    </div>
+    </span>
 
     <div class="flex-1 min-w-0">
-      <div class="flex items-start justify-between gap-4">
-        <div class="min-w-0">
-          <div class="flex items-center gap-2 min-w-0">
-            <h3 class="font-semibold text-gray-900 dark:text-white truncate text-sm">
-              {{ item.title or item.url }}
-            </h3>
-            {% if item.job_type not in ('author',) %}
-              {% if item.job_type in ('multi', 'parts') %}
-              <span class="flex-shrink-0 px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Combined</span>
-              {% elif item.is_series %}
-              <span class="flex-shrink-0 px-1.5 py-0.5 rounded text-xs font-medium bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300">Series</span>
-              {% elif item.status == 'completed' %}
-              <span class="flex-shrink-0 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">Story</span>
-              {% endif %}
-            {% endif %}
-          </div>
-          {% if item.author %}
-          <p class="text-sm text-slate-600 dark:text-slate-400 mt-0.5">{{ item.author }}</p>
-          {% endif %}
-        </div>
-        <div class="flex items-center gap-2 flex-shrink-0">
-          {% for fmt in item.formats %}
-          <span class="px-2 py-0.5 rounded-md {% if item.status == 'completed' %}bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400{% else %}bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300{% endif %} text-xs font-medium">
-            {{ fmt.upper() }}
-          </span>
-          {% endfor %}
-          {% if item.status != 'completed' %}
-          <button onclick="cancelItem({{ item.id }})"
-            title="{% if item.status == 'processing' %}Cancel download{% else %}Remove{% endif %}"
-            class="p-1 rounded-md text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-            </svg>
-          </button>
-          {% endif %}
-        </div>
-      </div>
+      <p class="text-sm truncate">
+        <span class="font-medium text-gray-900 dark:text-white">{{ item.title or item.url }}</span>
+        {% if item.author %}<span class="text-slate-500 dark:text-slate-400"> · {{ item.author }}</span>{% endif %}
+        {% if item.job_type in ('multi', 'parts') %}<span class="ml-1 px-1 rounded text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Combined</span>
+        {% elif item.job_type == 'author' %}<span class="ml-1 px-1 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">Author</span>
+        {% elif item.is_series %}<span class="ml-1 px-1 rounded text-[10px] font-medium bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300">Series</span>{% endif %}
+      </p>
 
-      {% if item.status == 'processing' and item.total_pages and item.downloaded_pages is not none %}
-      <div class="mt-3">
-        <div class="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 mb-1.5">
-          <span>{{ item.progress_message or 'Processing...' }}</span>
-          <span class="font-medium">{{ item.downloaded_pages }} / {{ item.total_pages }} pages</span>
-        </div>
-        <div class="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
-          <div class="bg-gradient-to-r from-amber-500 to-amber-600 h-1.5 rounded-full transition-all duration-300"
-               style="width: {{ (item.downloaded_pages / item.total_pages * 100) if item.total_pages > 0 else 0 }}%"></div>
-        </div>
-      </div>
-      {% elif item.status == 'processing' %}
-      <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">{{ item.progress_message or 'Processing...' }}</p>
-      {% endif %}
-
-      {% if item.status == 'failed' and item.error_message %}
-      <div class="mt-2 p-2.5 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/40">
-        <p class="text-xs text-red-700 dark:text-red-400">{{ item.error_message }}</p>
-      </div>
-      {% elif item.status == 'pending' and item.retry_in and item.error_message %}
-      <div class="mt-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900/40">
-        <p class="text-xs text-amber-800 dark:text-amber-300">{{ item.error_message }}</p>
-      </div>
-      {% elif item.status == 'rate_limited' %}
-      <div class="mt-2 p-2.5 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-900/40">
-        <p class="text-xs text-orange-700 dark:text-orange-400">Daily download limit reached. This item will resume automatically tomorrow.</p>
-      </div>
-      {% endif %}
-
-      <div class="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-        {% if item.status == 'completed' and item.completed_at %}
-          {{ item.completed_at|humanize_date }}{% if item.total_pages %} · {{ item.total_pages }} pages{% endif %}
-        {% elif item.status == 'failed' %}
-          Failed after {{ item.retry_count }} attempt{{ 's' if item.retry_count != 1 else '' }}
-        {% elif item.status == 'rate_limited' %}
-          <span class="text-orange-600 dark:text-orange-400 font-medium">Paused — daily limit</span>
-          · Added {{ item.created_at|humanize_date if item.created_at else 'recently' }}
-        {% elif item.status == 'pending' and item.retry_in %}
-          <span class="text-amber-700 dark:text-amber-400 font-medium">Trying again in about {{ item.retry_in }} minute{{ 's' if item.retry_in != 1 else '' }}</span>
-          · Added {{ item.created_at|humanize_date if item.created_at else 'recently' }}
-        {% elif item.status == 'pending' %}
-          Added {{ item.created_at|humanize_date if item.created_at else 'recently' }}
+      {% if item.status == 'processing' %}
+      <div class="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+        <span class="truncate">{{ item.progress_message or 'Downloading…' }}</span>
+        {% if item.total_pages and item.downloaded_pages is not none %}
+        <span class="flex-1 max-w-[8rem] h-1 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden"><span class="block h-1 bg-amber-500" style="width: {{ (item.downloaded_pages / item.total_pages * 100) if item.total_pages > 0 else 0 }}%"></span></span>
+        <span class="flex-shrink-0">{{ item.downloaded_pages }}/{{ item.total_pages }}</span>
         {% endif %}
       </div>
+      {% elif item.status == 'failed' and item.error_message %}
+      <p class="text-xs text-red-600 dark:text-red-400 truncate" title="{{ item.error_message }}">{{ item.error_message }}</p>
+      {% elif item.status == 'pending' and item.retry_in and item.error_message %}
+      <p class="text-xs text-amber-700 dark:text-amber-400 truncate" title="{{ item.error_message }}">{{ item.error_message }}</p>
+      {% endif %}
     </div>
+
+    <span class="flex-shrink-0 text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap text-right">
+      {% if item.status == 'completed' and item.completed_at %}
+        {{ item.completed_at|humanize_date }}
+      {% elif item.status == 'failed' %}
+        <span class="text-red-600 dark:text-red-400">Failed</span>
+      {% elif item.status == 'rate_limited' %}
+        <span class="text-orange-600 dark:text-orange-400" title="Daily download limit reached; resumes tomorrow">Tomorrow</span>
+      {% elif item.status == 'pending' and item.retry_in %}
+        <span class="text-amber-700 dark:text-amber-400" title="Trying again in about {{ item.retry_in }} minutes">Retry in {{ item.retry_in }} min</span>
+      {% elif item.status == 'pending' %}
+        Waiting
+      {% endif %}
+    </span>
+
+    {% if item.status != 'completed' %}
+    <button onclick="cancelItem({{ item.id }})"
+      title="{% if item.status == 'processing' %}Cancel download{% else %}Remove{% endif %}"
+      class="flex-shrink-0 p-0.5 rounded text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+    {% else %}
+    <span class="flex-shrink-0 w-[18px]"></span>
+    {% endif %}
   </div>
   {% endfor %}
 
   {% if not items %}
-  <div class="text-center py-16">
-    <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 mb-4">
-      <svg class="w-8 h-8 text-slate-400 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
-      </svg>
-    </div>
-    <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">No downloads yet</h3>
-    <p class="text-slate-600 dark:text-slate-400 mb-6">Queue stories from the home page to see them here</p>
-    <a href="/" class="inline-flex items-center gap-2 px-6 py-3 bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg transition-colors">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
-      </svg>
-      Add Story
-    </a>
+  <div class="text-center py-10 px-4">
+    <p class="text-sm font-medium text-gray-900 dark:text-white">Nothing downloaded yet</p>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mt-1">Add stories from the <a href="/" class="text-primary hover:underline">library</a> to see them here.</p>
   </div>
   {% endif %}
 

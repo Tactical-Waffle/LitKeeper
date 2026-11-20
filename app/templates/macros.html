@@ -92,7 +92,7 @@
 {% endmacro %}
 
 {% macro story_card_cover_grid(story) %}
-  <div class="cursor-pointer"
+  <div class="story-card cursor-pointer"
        data-story-id="{{ story.id }}"
        data-story-filename="{{ story.filename_base }}.html"
        {% if 'epub' in story.formats %}data-epub-story-id="{{ story.id }}"{% endif %}
@@ -102,7 +102,7 @@
        hx-disabled-elt="this"
        hx-on::error="this.classList.add('opacity-50'); console.error('[Story Card] Failed to load modal for story {{ story.id }}'); showToast && showToast('Failed to load story. Please refresh.', 'error')"
        hx-on::after-request="this.classList.remove('opacity-50')">
-    <div class="relative">
+    <div class="story-card-cover relative">
       <span class="story-select-mark" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
       </span>
@@ -130,14 +130,15 @@
         </svg>
       </span>
     </div>
+    <div class="card-under">
     {% if story.content_snippet %}
     <p class="story-content-snippet text-left text-[10px] text-gray-500 dark:text-gray-400 mt-1 px-1 leading-tight line-clamp-3 [&_mark]:bg-amber-200/70 [&_mark]:dark:bg-amber-500/30 [&_mark]:text-inherit [&_mark]:rounded-sm">{{ story.content_snippet | safe }}</p>
     {% endif %}
     {% if story.category %}
     <p class="story-category-label hidden text-center text-[10px] text-gray-500 dark:text-gray-400 mt-1 px-1 truncate leading-tight">{{ story.category }}</p>
     {% endif %}
-    {% if story.page_count %}
-    <p class="story-page-length-label hidden text-center text-[10px] text-gray-500 dark:text-gray-400 mt-1 px-1 truncate leading-tight">{{ story.page_count }} page{% if story.page_count != 1 %}s{% endif %}</p>
+    {% if story.word_count %}
+    <p class="story-word-count-label hidden text-center text-[10px] text-gray-500 dark:text-gray-400 mt-1 px-1 truncate leading-tight">{{ story.word_count | format_word_count }}</p>
     {% endif %}
     <div class="card-meta-row flex items-center justify-center gap-1 mt-1 min-h-[10px]">
       <span class="card-rating-container card-user-rating hidden items-center gap-0.5">
@@ -146,10 +147,30 @@
         {% endfor %}
       </span>
       {% if story.community_score is not none %}
-      <span class="card-community-score hidden items-center gap-0.5 text-[10px] text-gray-500 dark:text-gray-400 leading-none whitespace-nowrap">
-        <span class="card-community-score-star">★</span><span class="card-community-score-paren">(</span>{{ "%.1f"|format(story.community_score) }}<span class="card-community-score-paren">)</span>
+      <span class="card-community-score hidden items-center gap-0.5 text-[10px] text-gray-500 dark:text-gray-400 leading-none whitespace-nowrap" title="Literotica rating">
+        <span class="card-community-score-star text-amber-400">★</span>{{ "%.1f"|format(story.community_score) }}
       </span>
       {% endif %}
+    </div>
+    </div>
+    {# List and Detail views: the story's details beside a small cover (hidden in Covers view). #}
+    <div class="card-info min-w-0">
+      <p class="card-info-title text-sm font-semibold text-gray-900 dark:text-white truncate">{{ story.title }}</p>
+      <p class="text-xs text-gray-600 dark:text-gray-400 truncate">
+        {{ story.author or 'Unknown author' }}{% if story.category %} · {{ story.category }}{% endif %}
+      </p>
+      <p class="card-info-stats flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+        {% if story.word_count %}<span>{{ story.word_count | format_word_count }}</span>{% endif %}
+        {% if story.rating %}<span class="text-amber-500" title="Your rating">{{ '★' * story.rating }}<span class="text-slate-300 dark:text-slate-600">{{ '★' * (5 - story.rating) }}</span></span>{% endif %}
+        {% if story.community_score is not none %}<span title="Literotica rating"><span class="text-amber-400">★</span> {{ "%.2f"|format(story.community_score) }}</span>{% endif %}
+        {% if story.is_read %}<span class="text-emerald-600 dark:text-emerald-400 font-medium">Read</span>
+        {% elif story.read_percent %}<span>{{ story.read_percent }}% read</span>{% endif %}
+        {% if story.in_queue %}<span class="text-indigo-600 dark:text-indigo-400">In reading queue</span>{% endif %}
+        {% if story.date_added %}<span class="card-info-detail-only">Added {{ story.date_added[:10] }}</span>{% endif %}
+      </p>
+      {% if story.description %}<p class="card-info-detail-only mt-1 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">{{ story.description }}</p>{% endif %}
+      {% if story.tags %}<p class="card-info-detail-only mt-1 text-[11px] text-gray-500 dark:text-gray-400 line-clamp-1">{{ story.tags | join(', ') }}</p>{% endif %}
+      {% if story.content_snippet %}<p class="mt-1 text-[11px] text-gray-500 dark:text-gray-400 line-clamp-2 [&_mark]:bg-amber-200/70 [&_mark]:dark:bg-amber-500/30 [&_mark]:text-inherit">{{ story.content_snippet | safe }}</p>{% endif %}
     </div>
   </div>
 {% endmacro %}

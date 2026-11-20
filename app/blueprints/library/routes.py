@@ -196,11 +196,16 @@ def sync_full() -> ResponseReturnValue:
 def filter_library() -> ResponseReturnValue:
     try:
         raw_queue_only = request.args.get('queue_only')
-        log_action(f"[FILTER DEBUG] raw queue_only='{raw_queue_only}', bool={raw_queue_only == 'true'}")
+        # Community score: "4.5" means at least 4.5, "below-4.5" means rated under 4.5.
+        score_choice = str(request.args.get('min_community_score', '') or '')
+        min_community_score = max_community_score = 0.0
         try:
-            min_community_score = float(request.args.get('min_community_score', 0) or 0)
-        except (ValueError, TypeError):
-            min_community_score = 0.0
+            if score_choice.startswith('below-'):
+                max_community_score = float(score_choice[6:])
+            elif score_choice:
+                min_community_score = float(score_choice)
+        except ValueError:
+            pass
         try:
             min_pages = int(request.args.get('min_pages', 0) or 0)
         except (ValueError, TypeError):
@@ -209,17 +214,22 @@ def filter_library() -> ResponseReturnValue:
             max_pages = int(request.args.get('max_pages', 0) or 0)
         except (ValueError, TypeError):
             max_pages = 0
+        # Several categories can be picked (category=A&category=B); none, or "all", means every category.
+        categories = [c.strip() for c in request.args.getlist('category') if c.strip() and c.strip() != 'all']
         validated = LibraryFilterRequest(
             search=request.args.get('search', ''),
-            category=request.args.get('category', 'all'),
+            category=categories[0] if len(categories) == 1 else 'all',
+            categories=categories,
             sort_by=request.args.get('sort_by', 'date'),
             sort_order=request.args.get('sort_order', 'desc'),
             queue_only=raw_queue_only == 'true',
             min_community_score=min_community_score,
+            max_community_score=max_community_score,
             min_pages=min_pages,
             max_pages=max_pages,
             source=request.args.get('source', 'all'),
             user_rating=request.args.get('user_rating', ''),
+            read_status=request.args.get('read_status', ''),
         )
 
         page = request.args.get('page', 1, type=int)
@@ -227,11 +237,13 @@ def filter_library() -> ResponseReturnValue:
             page=page,
             per_page=PER_PAGE,
             search=validated.search,
-            category=validated.category,
+            category=validated.categories,
             sort_by=validated.sort_by,
             sort_order=validated.sort_order,
             queue_only=validated.queue_only,
             min_community_score=validated.min_community_score,
+            max_community_score=validated.max_community_score,
+            read_status=validated.read_status,
             min_pages=validated.min_pages,
             max_pages=validated.max_pages,
             source=validated.source,
@@ -242,10 +254,14 @@ def filter_library() -> ResponseReturnValue:
         next_url_params: dict = {
             'page': page + 1,
             'search': validated.search,
-            'category': validated.category,
+            'category': validated.categories or ['all'],
             'sort_by': validated.sort_by,
             'sort_order': validated.sort_order,
         }
+        if validated.max_community_score > 0:
+            next_url_params['min_community_score'] = f'below-{validated.max_community_score}'
+        if validated.read_status:
+            next_url_params['read_status'] = validated.read_status
         if validated.queue_only:
             next_url_params['queue_only'] = 'true'
         if validated.min_community_score > 0:
@@ -258,7 +274,7 @@ def filter_library() -> ResponseReturnValue:
             next_url_params['source'] = validated.source
         if validated.user_rating:
             next_url_params['user_rating'] = validated.user_rating
-        next_url = f"/library/filter?{urlencode(next_url_params)}"
+        next_url = f"/library/filter?{urlencode(next_url_params, doseq=True)}"
 
         template = "_library_more.html" if page > 1 else "_library_content.html"
         return render_template(template, stories=page_stories, queue_only=validated.queue_only, has_more=has_more, next_url=next_url)

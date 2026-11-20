@@ -57,10 +57,12 @@ def index() -> ResponseReturnValue:
         ai_cover_lettering=ai_cover.LETTERING,
         ai_cover_parallel_max=ai_cover.PARALLEL_MAX,
         ai_cover_prompts=ai_prompts.overview(),
+        ai_stats=_ai_stats(),
         log_files=_log_file_list(),
         log_settings=_log_settings(),
         log_size_max=_log_limits()[0], log_days_max=_log_limits()[1],
         story_filter_terms=_load_story_filter_terms(),
+        story_filter=_story_filter_settings(),
         log_retention_days=_log_retention_days(),
         daily_download_limit=dq.get_daily_cap(),
         daily_download_default=dq.DEFAULT_MAX_DAILY_DOWNLOADS,
@@ -446,6 +448,20 @@ STORY_FILTER_MAX_TERMS = 200
 STORY_FILTER_MAX_LENGTH = 100
 
 
+def _ai_stats() -> dict:
+    from app.services import ai_stats
+    try:
+        return ai_stats.tables()
+    except Exception as e:
+        log_error(f"Could not read the AI statistics: {e}")
+        return {'periods': ai_stats.PERIODS, 'kinds': [], 'models': [], 'total': {name: 0 for name, _ in ai_stats.PERIODS}}
+
+
+def _story_filter_settings() -> dict:
+    from app.services import story_filter
+    return story_filter.settings()
+
+
 def _load_story_filter_terms() -> list[str]:
     cfg = AppConfig.query.filter_by(key=STORY_FILTER_KEY).first()
     value = cfg.get_value() if cfg else None
@@ -454,30 +470,25 @@ def _load_story_filter_terms() -> list[str]:
 
 @settings.route('/story-filter', methods=['POST'])
 def save_story_filter() -> ResponseReturnValue:
-    """Settings → Story Filter: words or phrases, one per line or separated by commas."""
-    import re
+    """Settings → Story Filter: the Any and All lists (one term per line or comma-separated) and
+    whether the author window hides matching stories by default. {"terms": …} still saves the Any list."""
+    from app.services import story_filter
     data = request.get_json(silent=True) or {}
-    raw = data.get('terms', '')
-    pieces = raw if isinstance(raw, list) else re.split(r'[\n,]+', str(raw or ''))
-    terms = list(dict.fromkeys(t.strip() for t in map(str, pieces) if t.strip()))
-    if len(terms) > STORY_FILTER_MAX_TERMS:
-        return jsonify({'success': False, 'message': f'Use at most {STORY_FILTER_MAX_TERMS} terms.'}), 400
-    if any(len(t) > STORY_FILTER_MAX_LENGTH for t in terms):
-        return jsonify({'success': False, 'message': f'Keep each term under {STORY_FILTER_MAX_LENGTH} characters.'}), 400
+    any_terms = data.get('any', data.get('terms'))
+    hide = data.get('hide')
+    if hide is not None and not isinstance(hide, bool):
+        return jsonify({'success': False, 'message': 'hide must be true or false'}), 400
     try:
-        cfg = AppConfig.query.filter_by(key=STORY_FILTER_KEY).first()
-        if not cfg:
-            cfg = AppConfig(key=STORY_FILTER_KEY, value_type='json', description='Story filter terms for the author window')
-            db.session.add(cfg)
-        cfg.value_type = 'json'
-        cfg.set_value(terms)
-        db.session.commit()
+        saved = story_filter.save(any_terms, data.get('all'), hide)
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
     except Exception as e:
         db.session.rollback()
         log_error(f"Error saving story filter terms: {str(e)}")
         return jsonify({'success': False, 'message': 'Error saving the filter terms'}), 500
-    log_action(f"Story filter terms saved ({len(terms)})")
-    return jsonify({'success': True, 'terms': terms})
+    log_action(f"Story filter saved: {len(saved['any'])} Any, {len(saved['all'])} All, "
+               f"hide by default {'on' if saved['hide'] else 'off'}")
+    return jsonify({'success': True, 'terms': saved['any'], **saved})
 
 
 def _auto_mark_read() -> bool:

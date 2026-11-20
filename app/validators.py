@@ -163,7 +163,10 @@ class LibraryFilterRequest(BaseModel):
     min_pages: int = 0
     max_pages: int = 0
     source: Literal["all", "literotica", "custom"] = "all"
-    user_rating: Literal["", "1", "2", "3", "4", "5", "unrated"] = ""
+    user_rating: Literal["", "1", "2", "3", "4", "5", "below-2", "below-3", "below-4", "below-5", "unrated"] = ""
+    max_community_score: float = 0.0
+    read_status: Literal["", "read", "unread", "reading"] = ""
+    categories: list[str] = []
 
     @field_validator('search')
     @classmethod

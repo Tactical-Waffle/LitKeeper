@@ -59,6 +59,16 @@
               ↓ Newest first
             </button>
           </div>
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
+            <label class="flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="checkbox" id="authorHideDone" class="author-check" checked onchange="authorSetHide('done', this.checked)">
+              Hide works already in the library <span id="authorDoneCount" class="text-slate-400"></span>
+            </label>
+            <label id="authorHideFilteredLabel" class="hidden items-center gap-1.5 cursor-pointer select-none">
+              <input type="checkbox" id="authorHideFiltered" class="author-check" checked onchange="authorSetHide('filtered', this.checked)">
+              Hide filtered works <span id="authorFilteredCount" class="text-slate-400"></span>
+            </label>
+          </div>
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <button type="button" onclick="authorSelectAll(true)" class="author-tool-btn">Select all</button>
             <button type="button" onclick="authorSelectAll(false)" class="author-tool-btn">Select none</button>
@@ -128,6 +138,10 @@
   .author-check { width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer; accent-color: #498EDC; }
   .author-check:disabled { cursor: not-allowed; opacity: .4; }
   .author-caret { transition: transform .15s; }
+  /* Parts sit inside their series: indented past the series' checkbox, with a guide line. */
+  .author-part { margin-left: 2.6rem; padding-left: 1.4rem; border-left: 2px solid rgb(203 213 225); }
+  @media (min-width: 640px) { .author-part { margin-left: 2.85rem; } }
+  [data-theme="dark"] .author-part { border-left-color: rgb(71 85 105); }
   .author-caret[aria-expanded="true"] { transform: rotate(90deg); }
 </style>
 
@@ -141,7 +155,10 @@ var _authorId = null;
 var _authorWatched = false;
 var _authorSelected = new Set();   // URLs of picked stories and parts
 var _authorExpanded = new Set();   // URLs of series shown open
-var _authorFilterTerms = [];
+var _authorFilterTerms = [];       // both lists, for Select matches / Deselect matches
+var _authorFilterAny = [];
+var _authorFilterAll = [];
+var _authorHide = { done: true, filtered: true };
 
 var AUTHOR_SORT_LABELS = {
   date: ['↓ Newest first', '↑ Oldest first'],
@@ -157,6 +174,9 @@ function openAuthorPreviewModal(authorUrl) {
   _authorSelected = new Set();
   _authorExpanded = new Set();
   _authorFilterTerms = [];
+  _authorFilterAny = [];
+  _authorFilterAll = [];
+  _authorHide = { done: true, filtered: true };
 
   _setAuthorPreviewState('loading');
   document.getElementById('authorPreviewTitle').textContent = 'Author Stories';
@@ -206,12 +226,69 @@ function _authorPickable(item) {
   return !item.in_library && !item.is_queued;
 }
 
-function _authorMatch(item, series) {
-  if (!_authorFilterTerms.length) return null;
-  const text = [item.title, item.description, item.category, ...(item.tags || []),
-                series ? series.title : '', series ? series.description : '']
+function _authorText(item, series) {
+  return [item.title, item.description, item.category, ...(item.tags || []),
+          series ? series.title : '', series ? series.description : '']
     .filter(Boolean).join(' \n ').toLowerCase();
-  return _authorFilterTerms.find(term => text.includes(term.toLowerCase())) || null;
+}
+
+function _authorMatchIn(terms, item, series) {
+  if (!terms.length) return null;
+  const text = _authorText(item, series);
+  return terms.find(term => text.includes(term.toLowerCase())) || null;
+}
+
+function _authorMatch(item, series) {
+  return _authorMatchIn(_authorFilterTerms, item, series);
+}
+
+function _authorDone(item) {
+  return !!(item.in_library || item.is_queued);
+}
+
+// Settings → Story Filter. A single story is filtered when it matches a term on either list. A series
+// is filtered when any part matches an Any term, or when every part matches an All term.
+function _authorFilteredBy(entry) {
+  const parts = _authorParts(entry);
+  if (!parts) return _authorMatchIn(_authorFilterAny, entry, null) || _authorMatchIn(_authorFilterAll, entry, null);
+  for (const part of parts) {
+    const hit = _authorMatchIn(_authorFilterAny, part, entry);
+    if (hit) return hit;
+  }
+  if (_authorFilterAll.length) {
+    const hits = parts.map(part => _authorMatchIn(_authorFilterAll, part, entry));
+    if (hits.every(Boolean)) return hits[0];
+  }
+  return null;
+}
+
+function _authorEntryDone(entry) {
+  const parts = _authorParts(entry);
+  return parts ? parts.every(_authorDone) : _authorDone(entry);
+}
+
+function _authorEntryShown(entry) {
+  if (_authorHide.done && _authorEntryDone(entry)) return false;
+  if (_authorHide.filtered && _authorFilteredBy(entry)) return false;
+  return true;
+}
+
+function _authorPartShown(part) {
+  return !(_authorHide.done && _authorDone(part));
+}
+
+// The ticks that can be seen: parts of shown series (hidden parts left out) and shown stories.
+function _authorShownLeaves() {
+  return _authorLeaves().filter(({ item, series }) =>
+    _authorEntryShown(series || item) && (!series || _authorPartShown(item)));
+}
+
+function authorSetHide(which, on) {
+  _authorHide[which] = on;
+  // Whatever is hidden is not added.
+  const shown = new Set(_authorShownLeaves().map(({ item }) => item.url));
+  [..._authorSelected].forEach(url => { if (!shown.has(url)) _authorSelected.delete(url); });
+  _renderAuthorStoryList();
 }
 
 async function _fetchAuthorPreview(authorUrl) {
@@ -230,8 +307,18 @@ async function _fetchAuthorPreview(authorUrl) {
     _authorId = data.author_id || null;
     _authorWatched = data.watch_enabled || false;
     _authorFilterTerms = (data.filter_terms || []).filter(t => t && t.trim());
-    // Start with everything that isn't already in the library ticked.
-    _authorLeaves().forEach(({ item }) => { if (_authorPickable(item)) _authorSelected.add(item.url); });
+    _authorFilterAny = (data.filter_any || data.filter_terms || []).filter(t => t && t.trim());
+    _authorFilterAll = (data.filter_all || []).filter(t => t && t.trim());
+    _authorHide = { done: true, filtered: data.filter_hide !== false };
+    document.getElementById('authorHideDone').checked = true;
+    document.getElementById('authorHideFiltered').checked = _authorHide.filtered;
+    const hasLists = _authorFilterAny.length + _authorFilterAll.length > 0;
+    document.getElementById('authorHideFilteredLabel').classList.toggle('hidden', !hasLists);
+    document.getElementById('authorHideFilteredLabel').classList.toggle('flex', hasLists);
+    // Start with everything that isn't already in the library ticked, except filtered works.
+    _authorLeaves().forEach(({ item, series }) => {
+      if (_authorPickable(item) && !_authorFilteredBy(series || item)) _authorSelected.add(item.url);
+    });
 
     const series = _authorPreviewStories.filter(e => e.is_series).length;
     const singles = _authorPreviewStories.length - series;
@@ -338,7 +425,7 @@ function authorToggleItem(url, on) {
 function authorToggleSeries(url, on) {
   const entry = _authorPreviewStories.find(e => e.url === url);
   if (!entry) return;
-  (_authorParts(entry) || []).filter(_authorPickable)
+  (_authorParts(entry) || []).filter(p => _authorPickable(p) && _authorPartShown(p))
     .forEach(p => { if (on) _authorSelected.add(p.url); else _authorSelected.delete(p.url); });
   _renderAuthorStoryList();
 }
@@ -349,7 +436,7 @@ function authorToggleExpanded(url) {
 }
 
 function authorSelectAll(on) {
-  _authorLeaves().forEach(({ item }) => {
+  _authorShownLeaves().forEach(({ item }) => {
     if (!_authorPickable(item)) return;
     if (on) _authorSelected.add(item.url); else _authorSelected.delete(item.url);
   });
@@ -358,7 +445,7 @@ function authorSelectAll(on) {
 
 function authorSelectMatches(on) {
   let count = 0;
-  _authorLeaves().forEach(({ item, series }) => {
+  _authorShownLeaves().forEach(({ item, series }) => {
     if (!_authorPickable(item) || !_authorMatch(item, series)) return;
     count++;
     if (on) _authorSelected.add(item.url); else _authorSelected.delete(item.url);
@@ -419,6 +506,15 @@ function _authorRow(item, opts) {
     chips.push(_authorChip(n > 1 ? `${n}-part series` : 'Series', 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300'));
   }
   if (status) chips.push(_authorChip(status, 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'));
+  if (isSeries && !status) {
+    const all = _authorParts(item) || [];
+    const have = all.filter(_authorDone).length;
+    if (have) chips.push(_authorChip(`${have} of ${all.length} parts in library`, 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'));
+  }
+  if (!indent) {
+    const filtered = _authorFilteredBy(item);
+    if (filtered) chips.push(_authorChip(`Filtered: “${filtered}”`, 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300'));
+  }
   if (!isSeries) {
     const match = _authorMatch(item, series);
     if (match) chips.push(_authorChip(`Matches “${match}”`, 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300'));
@@ -438,7 +534,7 @@ function _authorRow(item, opts) {
 
   const dim = !pickable;
   return `
-    <div class="flex items-start gap-2.5 ${indent ? 'pl-12 pr-5 sm:pr-6 py-2.5 bg-slate-50/50 dark:bg-slate-900/20' : 'px-5 sm:px-6 py-3'} ${dim ? 'opacity-60' : ''}">
+    <div class="flex items-start gap-2.5 ${indent ? 'author-part pr-5 sm:pr-6 py-2.5 bg-slate-50/60 dark:bg-slate-900/30' : 'px-5 sm:px-6 py-3'} ${dim ? 'opacity-60' : ''}">
       ${indent ? '' : caret}
       <div class="pt-0.5">${box}</div>
       <div class="flex-1 min-w-0">
@@ -456,12 +552,13 @@ function _authorRow(item, opts) {
         ${item.description ? `<p class="mt-0.5 text-xs text-slate-400 dark:text-slate-500 line-clamp-1">${_escHtml(item.description)}</p>` : ''}
       </div>
     </div>
-    ${parts && open ? `<div class="divide-y divide-slate-100 dark:divide-slate-700/40">${parts.map(p => _authorRow(p, { series: item, indent: true })).join('')}</div>` : ''}`;
+    ${parts && open ? `<div class="divide-y divide-slate-100 dark:divide-slate-700/40">${parts.filter(_authorPartShown).map(p => _authorRow(p, { series: item, indent: true })).join('')}</div>` : ''}`;
 }
 
 function _authorUpdateFooter() {
   const picked = _authorLeaves().filter(({ item }) => _authorPickable(item) && _authorSelected.has(item.url)).length;
   const pickable = _authorLeaves().filter(({ item }) => _authorPickable(item)).length;
+  const pickableShown = _authorShownLeaves().filter(({ item }) => _authorPickable(item)).length;
   const btn = document.getElementById('addAllStoriesBtn');
   if (btn) {
     btn.classList.toggle('hidden', pickable === 0);
@@ -469,7 +566,9 @@ function _authorUpdateFooter() {
     btn.textContent = picked ? `Add ${picked} ${picked === 1 ? 'story' : 'stories'}` : 'Add Selected';
   }
   const count = document.getElementById('authorSelectedCount');
-  if (count) count.textContent = pickable ? `${picked} of ${pickable} selected` : 'Everything is already in your library';
+  if (count) count.textContent = pickable
+    ? `${picked} of ${pickableShown} selected${pickable > pickableShown ? ` (${pickable - pickableShown} more hidden)` : ''}`
+    : 'Everything is already in your library';
 
   const watchLabel = document.getElementById('authorWatchLabel');
   const standaloneLabel = document.getElementById('authorWatchStandaloneLabel');
@@ -494,9 +593,15 @@ function _authorUpdateFooter() {
 function _renderAuthorStoryList() {
   const list = document.getElementById('authorStoryList');
   const scroll = list.scrollTop;
-  list.innerHTML = _getSortedStories()
+  const all = _getSortedStories();
+  const shown = all.filter(_authorEntryShown);
+  list.innerHTML = shown
     .map(entry => `<div>${_authorRow(entry, { isSeries: !!_authorParts(entry) })}</div>`)
-    .join('');
+    .join('') || `<p class="px-6 py-10 text-center text-sm text-slate-500 dark:text-slate-400">Nothing to show. Untick a “Hide” box above to see the hidden works.</p>`;
+  const done = all.filter(_authorEntryDone).length;
+  const filtered = all.filter(e => _authorFilteredBy(e)).length;
+  document.getElementById('authorDoneCount').textContent = `(${done})`;
+  document.getElementById('authorFilteredCount').textContent = `(${filtered})`;
   // A series with only some parts ticked shows a half-ticked box.
   list.querySelectorAll('input[data-mixed]').forEach(box => { box.indeterminate = true; });
   list.scrollTop = scroll;

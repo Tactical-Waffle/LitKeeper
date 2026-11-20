@@ -182,19 +182,32 @@
         Story Filter
       </h3>
       <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-        Words or phrases to look for when you open an author's stories. The window's <strong>Select matches</strong> and
-        <strong>Deselect matches</strong> buttons tick or untick every story whose title, description, category or tags
-        contain one of them. Matching ignores upper and lower case. Put one per line, or separate them with commas.
+        Words or phrases to look for in a story's title, description, category and tags when you open an author's
+        stories. Matching ignores upper and lower case. Put one per line, or separate them with commas.
       </p>
-      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="storyFilterTerms">Filter terms</label>
-      <textarea id="storyFilterTerms" rows="4" placeholder="e.g. incest&#10;non-consent"
-        class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">{{ story_filter_terms | join('\n') }}</textarea>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300" for="storyFilterAny">Any</label>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">Filters a story, or a whole series when <em>any</em> of its parts matches.</p>
+          <textarea id="storyFilterAny" rows="4" placeholder="e.g. non-consent" class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">{{ story_filter.any | join('\n') }}</textarea>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300" for="storyFilterAll">All</label>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">Filters a story, but a series only when <em>all</em> of its parts match.</p>
+          <textarea id="storyFilterAll" rows="4" placeholder="e.g. taboo" class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">{{ story_filter.all | join('\n') }}</textarea>
+        </div>
+      </div>
+      <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 mt-3">
+        <input type="checkbox" id="storyFilterHide" class="mt-1 rounded border-gray-300 dark:border-gray-600" {{ 'checked' if story_filter.hide else '' }}>
+        <span>Hide filtered stories in the author list by default (a switch at the top of the list shows them)</span>
+      </label>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Filtered stories are never ticked automatically. <strong>Select matches</strong> and <strong>Deselect matches</strong> use both lists.</p>
       <div class="flex items-center gap-3 mt-3">
         <button id="storyFilterSaveBtn" type="button" onclick="saveStoryFilter()"
           class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">
           Save
         </button>
-        <span id="storyFilterCount" class="text-xs text-gray-500 dark:text-gray-400">{{ story_filter_terms | length }} {{ 'term' if story_filter_terms | length == 1 else 'terms' }}</span>
+        <span id="storyFilterCount" class="text-xs text-gray-500 dark:text-gray-400">{{ story_filter.any | length }} Any · {{ story_filter.all | length }} All</span>
       </div>
     </section>
   </div>
@@ -498,7 +511,7 @@
         <div class="space-y-2 pt-1">
           <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
             <input type="checkbox" id="aiCoverAuto" {{ 'checked' if ai_cover_settings.auto else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
-            <span>Make an AI cover for every newly downloaded story <span class="text-xs text-gray-500 dark:text-gray-400">(each one costs OpenRouter credit)</span></span>
+            <span>Make an AI cover for each newly downloaded story <span class="text-xs text-gray-500 dark:text-gray-400">(each one costs OpenRouter credit)</span></span>
           </label>
           <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
             <input type="checkbox" id="aiCoverRetryUnlettered" {{ 'checked' if ai_cover_settings.retry_unlettered else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
@@ -546,6 +559,40 @@
       </div>
     </section>
   </div>
+
+  {% macro money(value) %}{{ '$%.2f'|format(value) if value >= 0.01 or not value else '$%.4f'|format(value) }}{% endmacro %}
+  {% macro stats_head(extra='') %}<thead><tr><th scope="col"></th>{% for name, label in ai_stats.periods %}<th scope="col">{{ label }}</th>{% endfor %}{% if extra %}<th scope="col">{{ extra }}</th>{% endif %}</tr></thead>{% endmacro %}
+  <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
+    <section id="aiStats" style="scroll-margin-top:5rem">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
+        <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+        AI Statistics
+      </h3>
+      <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">What OpenRouter calls cost, as OpenRouter reports it, in the server's local time (weeks start on Monday). Each call counts once: retries and refused attempts are separate calls. Kept in <code class="text-xs">ai-calls.jsonl</code> in the data folder.</p>
+      <div class="ai-stats-wrap"><table class="ai-stats" aria-label="AI costs by purpose">{{ stats_head() }}
+        <tbody>{% for row in ai_stats.kinds %}<tr><th scope="row">{{ row.label }}</th>{% for name, _ in ai_stats.periods %}<td>{{ money(row.cost[name]) }}</td>{% endfor %}</tr>{% endfor %}
+        <tr class="ai-stats-total"><th scope="row">Total</th>{% for name, _ in ai_stats.periods %}<td>{{ money(ai_stats.total[name]) }}</td>{% endfor %}</tr></tbody></table></div>
+      {% if ai_stats.models %}
+      <details class="ai-stats-more"><summary>AI model costs</summary><div class="ai-stats-wrap"><table class="ai-stats" aria-label="AI costs by model">{{ stats_head('Average per call') }}
+        <tbody>{% for row in ai_stats.models %}<tr><th scope="row">{{ row.model }}</th>{% for name, _ in ai_stats.periods %}<td>{{ money(row.cost[name]) }}</td>{% endfor %}<td>{{ money(row.average_cost) }}</td></tr>{% endfor %}</tbody></table></div></details>
+      <details class="ai-stats-more"><summary>AI model successes</summary><div class="ai-stats-wrap"><table class="ai-stats" aria-label="Successful AI calls by model">{{ stats_head('Success rate') }}
+        <tbody>{% for row in ai_stats.models %}<tr><th scope="row">{{ row.model }}</th>{% for name, _ in ai_stats.periods %}<td>{{ '{:,}'.format(row.ok[name]) }}</td>{% endfor %}<td>{{ '%.0f'|format(row.success_rate * 100) }}%</td></tr>{% endfor %}</tbody></table></div></details>
+      <details class="ai-stats-more"><summary>AI model failures</summary><div class="ai-stats-wrap"><table class="ai-stats" aria-label="Failed AI calls by model">{{ stats_head() }}
+        <tbody>{% for row in ai_stats.models %}<tr><th scope="row">{{ row.model }}</th>{% for name, _ in ai_stats.periods %}<td>{{ '{:,}'.format(row.failed[name]) }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div></details>
+      <p class="text-xs text-gray-600 dark:text-gray-400 mt-2">A failure is a call that did not give a usable answer: an error status (a refusal, no credit, a server error), an error in the answer, or a picture call that returned no picture. Covers made before these statistics were kept are counted from the finished covers only, so they show no failures, and each cover's description and picture cost appear together under its image model.</p>
+      {% else %}
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">No AI calls yet.</p>
+      {% endif %}
+    </section>
+  </div>
+  <style>
+    .ai-stats-wrap{overflow-x:auto}.ai-stats{border-collapse:collapse;font-size:.85rem;min-width:100%}
+    .ai-stats th,.ai-stats td{padding:.3rem .6rem;border-bottom:1px solid #94a3b833;white-space:nowrap}.ai-stats thead th{font-size:.75rem;font-weight:600;opacity:.75;text-align:right}
+    .ai-stats td{text-align:right;font-variant-numeric:tabular-nums}.ai-stats tbody th{text-align:left;font-weight:500}.ai-stats-total th,.ai-stats-total td{font-weight:650;border-bottom:0}
+    .ai-stats-more{margin-top:.8rem}.ai-stats-more summary{cursor:pointer;font-weight:600;font-size:.9rem}
+  </style>
 
   <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
     <section>
@@ -945,12 +992,16 @@
 
   async function saveStoryFilter() {
     const button = document.getElementById('storyFilterSaveBtn');
-    const box = document.getElementById('storyFilterTerms');
-    const data = await withBusy(button, 'Saving...', () => notificationRequest('/settings/story-filter', 'POST', { terms: box.value }));
+    const anyBox = document.getElementById('storyFilterAny');
+    const allBox = document.getElementById('storyFilterAll');
+    const hide = document.getElementById('storyFilterHide');
+    const data = await withBusy(button, 'Saving...', () => notificationRequest('/settings/story-filter', 'POST',
+      { any: anyBox.value, all: allBox.value, hide: hide.checked }));
     if (!data.success) { showToast(data.message || 'Error saving the filter terms', 'error'); return; }
-    box.value = data.terms.join('\n');
-    document.getElementById('storyFilterCount').textContent = `${data.terms.length} ${data.terms.length === 1 ? 'term' : 'terms'}`;
-    showToast('Filter terms saved', 'success');
+    anyBox.value = data.any.join('\n');
+    allBox.value = data.all.join('\n');
+    document.getElementById('storyFilterCount').textContent = `${data.any.length} Any · ${data.all.length} All`;
+    showToast('Story filter saved', 'success');
   }
 
   async function saveAutoMarkRead(box) {
