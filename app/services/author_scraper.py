@@ -70,7 +70,8 @@ def _category_name(info: Optional[dict]) -> Optional[str]:
     if not isinstance(info, dict):
         return None
     if info.get('name'):
-        return info['name']
+        # Literotica sends some names HTML-escaped ("Transsexuals &amp; Crossdressers").
+        return html_module.unescape(str(info['name']))
     page = info.get('pageUrl')
     if not page:
         return None
@@ -105,7 +106,8 @@ def _work_from_api(work: dict) -> dict:
         'date_approve': work.get('date_approve'),
         'category': _category_name(work.get('category_info')),
         'description': html_module.unescape(work.get('description') or '') or None,
-        'tags': [t.get('tag') for t in (work.get('tags') or []) if isinstance(t, dict) and t.get('tag')],
+        'tags': [html_module.unescape(str(t.get('tag'))) for t in (work.get('tags') or [])
+                 if isinstance(t, dict) and t.get('tag')],
     }
 
 

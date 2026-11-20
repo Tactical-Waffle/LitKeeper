@@ -85,6 +85,11 @@ class TestWorksFeed:
         session.get.side_effect = RuntimeError('blocked')
         assert author_scraper.fetch_author_works('Someone', session=session) is None
 
+    def test_escaped_names_are_unescaped(self) -> None:
+        work = _work('x', 'X', page='transsexual', name='Transsexuals &amp; Crossdressers', tags=('m&amp;f',))
+        entry = author_scraper._work_from_api(work)
+        assert entry['category'] == 'Transsexuals & Crossdressers' and entry['tags'] == ['m&f']
+
     def test_username(self) -> None:
         assert author_scraper.author_username('https://www.literotica.com/authors/Cuckvoyeurfan/works/stories') == 'Cuckvoyeurfan'
         assert author_scraper.author_username('https://www.literotica.com/stories/memberpage.php?uid=1&page=submissions') is None
