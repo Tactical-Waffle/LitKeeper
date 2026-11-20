@@ -609,32 +609,59 @@
         Logs
       </h3>
       <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-        LitKeeper keeps two log files in the <code class="text-xs">logs</code> folder inside your data folder.
-        The main log has downloads, errors and page loads. The API log has every API call, kept separate because
-        there are a lot of them. Each log starts a new file every day at midnight and keeps the last {{ log_retention_days }} {{ 'day' if log_retention_days == 1 else 'days' }}
-        (set with <code class="text-xs">LOG_RETENTION_DAYS</code>).
+        LitKeeper keeps two logs in the <code class="text-xs">logs</code> folder inside your data folder. The main log has
+        downloads, errors and page loads. The API log has every API call, with the JSON sent on its own line.
+        Each log starts a new file every day, or sooner when it reaches the size below. Old files are kept, uncompressed,
+        for the number of days below.
       </p>
-      <div class="flex flex-wrap items-center gap-2 mb-3">
-        <div class="inline-flex rounded-lg border border-slate-200 dark:border-gray-700 p-1 bg-slate-50 dark:bg-gray-900" role="tablist" aria-label="Which log">
-          {% for log in log_files %}
-          <button type="button" role="tab" data-log-name="{{ log.name }}" onclick="loadLog('{{ log.name }}')"
-            class="log-tab h-8 px-3 rounded-md text-sm font-medium transition-all duration-200">
-            {{ log.label }} <span class="text-xs opacity-70">{{ log.size }}</span>
-          </button>
-          {% endfor %}
-        </div>
-        <button type="button" id="logRefreshBtn" onclick="loadLog()"
-          class="h-10 px-3 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-slate-50 dark:hover:bg-gray-700 text-sm font-medium transition-all duration-200">
-          Refresh
-        </button>
-        <a id="logDownloadLink" href="/settings/logs/litkeeper.log" hx-boost="false"
-          class="h-10 inline-flex items-center px-3 rounded-lg text-sm font-medium text-primary hover:underline">
-          Download
-        </a>
+      <div class="flex flex-wrap items-end gap-3 mb-5">
+        <label class="text-sm text-gray-700 dark:text-gray-300">
+          <span class="block font-medium mb-1">Start a new file at</span>
+          <span class="flex items-center gap-2"><input type="number" id="logMaxMb" min="1" max="{{ log_size_max }}" step="1" inputmode="numeric" value="{{ log_settings.max_mb }}" class="w-24 px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary"> MB</span>
+        </label>
+        <label class="text-sm text-gray-700 dark:text-gray-300">
+          <span class="block font-medium mb-1">Keep old files for</span>
+          <span class="flex items-center gap-2"><input type="number" id="logRetentionDays" min="1" max="{{ log_days_max }}" step="1" inputmode="numeric" value="{{ log_settings.retention_days }}" class="w-24 px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary"> days</span>
+        </label>
+        <button id="logSettingsSaveBtn" type="button" onclick="saveLogSettings()"
+          class="h-10 px-4 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">Save</button>
       </div>
-      <p id="logInfo" class="text-xs text-gray-500 dark:text-gray-400 mb-2">Loading…</p>
-      <pre id="logLines" tabindex="0" aria-label="Log lines, newest at the bottom"
-        class="h-96 overflow-auto rounded-lg border border-slate-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-950 p-3 text-[11px] leading-relaxed font-mono text-gray-800 dark:text-gray-200 whitespace-pre"></pre>
+
+      <div class="flex flex-wrap items-center gap-2 mb-2">
+        <label class="sr-only" for="logFile">Log file</label>
+        <select id="logFile" onchange="loadLog(this.value)" class="h-10 px-3 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary max-w-full">
+          {% for log in log_files %}
+          <option value="{{ log.name }}">{{ log.label }} · {{ log.size }}</option>
+          {% endfor %}
+        </select>
+        <label class="sr-only" for="logLevel">Which entries</label>
+        <select id="logLevel" onchange="logChoiceChanged()" class="h-10 px-3 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+          <option value="all">All entries</option>
+          <option value="problems">Warnings and errors</option>
+          <option value="errors">Errors only</option>
+        </select>
+        <input type="search" id="logSearch" placeholder="Search the log" oninput="logChoiceChanged()" aria-label="Search the log"
+          class="h-10 px-3 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary flex-1 min-w-[12rem]">
+      </div>
+      <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mb-2 text-sm text-gray-700 dark:text-gray-300">
+        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="logShowApi" checked onchange="logChoiceChanged()" class="rounded border-gray-300 dark:border-gray-600"> Show API data</label>
+        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="logFollow" checked onchange="logChoiceChanged(true)" class="rounded border-gray-300 dark:border-gray-600"> Scroll to bottom on new message</label>
+        <a id="logDownloadLink" href="/settings/logs/litkeeper.log" hx-boost="false" class="ml-auto font-medium text-primary hover:underline">Download</a>
+      </div>
+      <p id="logInfo" class="text-xs text-gray-500 dark:text-gray-400 mb-2" aria-live="polite">Loading…</p>
+      <div id="logLines" tabindex="0" role="log" aria-label="Log entries, newest at the bottom"
+        class="overflow-auto rounded-lg border border-slate-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-950 p-3 text-[11px] leading-relaxed font-mono text-gray-800 dark:text-gray-200"
+        style="height: 24rem; min-height: 8rem; resize: vertical;"></div>
+      <style>
+        #logLines .log-entry { white-space: pre-wrap; word-break: break-word; padding: 1px 0; }
+        #logLines .log-WARNING { color: #b45309; }
+        #logLines .log-ERROR, #logLines .log-CRITICAL { color: #dc2626; }
+        [data-theme="dark"] #logLines .log-WARNING { color: #fbbf24; }
+        [data-theme="dark"] #logLines .log-ERROR, [data-theme="dark"] #logLines .log-CRITICAL { color: #f87171; }
+        #logLines .log-api-data { opacity: .75; }
+        #logLines mark { background: #fde68a; color: inherit; border-radius: 2px; }
+        [data-theme="dark"] #logLines mark { background: #854d0e; }
+      </style>
     </section>
   </div>
 
@@ -643,43 +670,132 @@
 
 <script>
   // --- Logs ------------------------------------------------------------------------------
-  var LOG_LINES = 500;
+  // Entries come from the server as JSON; filtering and searching happen here. Today's files are
+  // checked every 3 seconds while the page is open. The choices are remembered in this browser.
   var currentLogName = 'litkeeper.log';
+  var logEntries = [];
+  var logTimer = null;
+  var LOG_TODAY = ['litkeeper.log', 'api.log'];
 
-  async function loadLog(name) {
-    if (name) currentLogName = name;
-    document.querySelectorAll('.log-tab').forEach(tab => {
-      const on = tab.dataset.logName === currentLogName;
-      tab.setAttribute('aria-selected', on ? 'true' : 'false');
-      tab.classList.toggle('bg-white', on);
-      tab.classList.toggle('dark:bg-gray-800', on);
-      tab.classList.toggle('shadow-sm', on);
-      tab.classList.toggle('text-gray-900', on);
-      tab.classList.toggle('dark:text-white', on);
-      tab.classList.toggle('text-gray-600', !on);
-      tab.classList.toggle('dark:text-gray-400', !on);
-    });
-    const box = document.getElementById('logLines');
-    const info = document.getElementById('logInfo');
-    const download = document.getElementById('logDownloadLink');
-    if (!box) return;
-    if (download) download.href = `/settings/logs/${currentLogName}`;
-    info.textContent = 'Loading…';
+  function logPrefs(save) {
+    const ids = { level: 'logLevel', search: 'logSearch', api: 'logShowApi', follow: 'logFollow' };
     try {
-      const response = await fetch(`/settings/logs/${currentLogName}/tail?lines=${LOG_LINES}`);
+      if (save) {
+        localStorage.setItem('litkeeper_log_view', JSON.stringify({
+          name: currentLogName, level: logLevel.value, search: logSearch.value, api: logShowApi.checked, follow: logFollow.checked }));
+        return;
+      }
+      const saved = JSON.parse(localStorage.getItem('litkeeper_log_view') || 'null');
+      if (!saved) return;
+      if (saved.name && [...logFile.options].some(o => o.value === saved.name)) currentLogName = saved.name;
+      logLevel.value = saved.level || 'all';
+      logSearch.value = saved.search || '';
+      logShowApi.checked = saved.api !== false;
+      logFollow.checked = saved.follow !== false;
+    } catch (_) {}
+  }
+
+  function logMatches(entry, level, words) {
+    if (!logShowApi.checked && entry.api_data) return false;
+    if (level === 'problems' && !['WARNING', 'ERROR', 'CRITICAL'].includes(entry.level)) return false;
+    if (level === 'errors' && !['ERROR', 'CRITICAL'].includes(entry.level)) return false;
+    return !words || entry.text.toLowerCase().includes(words);
+  }
+
+  function logHighlighted(text, words) {
+    const piece = document.createDocumentFragment();
+    if (!words) { piece.append(text); return piece; }
+    const lower = text.toLowerCase();
+    let at = 0, found;
+    while ((found = lower.indexOf(words, at)) !== -1) {
+      piece.append(text.slice(at, found));
+      const mark = document.createElement('mark');
+      mark.textContent = text.slice(found, found + words.length);
+      piece.append(mark);
+      at = found + words.length;
+    }
+    piece.append(text.slice(at));
+    return piece;
+  }
+
+  function renderLog(scrollDown) {
+    const box = document.getElementById('logLines');
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+    const words = logSearch.value.trim().toLowerCase();
+    const shown = logEntries.filter(e => logMatches(e, logLevel.value, words));
+    const rows = document.createDocumentFragment();
+    shown.forEach(entry => {
+      const row = document.createElement('div');
+      row.className = `log-entry log-${entry.level}${entry.api_data ? ' log-api-data' : ''}`;
+      row.append(logHighlighted(entry.text, words));
+      rows.append(row);
+    });
+    const keep = box.scrollTop;
+    box.replaceChildren(rows);
+    if (!logEntries.length) box.textContent = 'Nothing logged yet.';
+    else if (!shown.length) box.textContent = 'No entries match.';
+    if (scrollDown || (logFollow.checked && atBottom)) box.scrollTop = box.scrollHeight;
+    else box.scrollTop = keep;
+    const hidden = logEntries.length - shown.length;
+    document.getElementById('logInfo').textContent =
+      `${shown.length} of ${logEntries.length} ${logEntries.length === 1 ? 'entry' : 'entries'}` +
+      (hidden ? ` (${hidden} hidden by the filters)` : '') +
+      (LOG_TODAY.includes(currentLogName) ? ` · live, updated ${new Date().toLocaleTimeString()}` : '') + '.';
+  }
+
+  async function fetchLog(firstLoad) {
+    const name = currentLogName;
+    try {
+      const response = await fetch(`/settings/logs/${encodeURIComponent(name)}/entries`);
       const data = await response.json();
-      if (!data.success) throw new Error();
-      box.textContent = data.lines.length ? data.lines.join('\n') : 'Nothing logged yet.';
-      info.textContent = data.count >= LOG_LINES
-        ? `Last ${LOG_LINES} lines, newest at the bottom. Updated ${new Date().toLocaleTimeString()}.`
-        : `${data.count} ${data.count === 1 ? 'line' : 'lines'}, newest at the bottom. Updated ${new Date().toLocaleTimeString()}.`;
-      box.scrollTop = box.scrollHeight;
+      if (!data.success || name !== currentLogName) return;
+      const grew = data.entries.length !== logEntries.length ||
+        (data.entries.length && data.entries[data.entries.length - 1].text !== logEntries[logEntries.length - 1]?.text);
+      logEntries = data.entries;
+      if (firstLoad || grew) renderLog(firstLoad || (grew && logFollow.checked));
     } catch (e) {
-      info.textContent = 'Could not load the log.';
+      document.getElementById('logInfo').textContent = 'Could not load the log.';
     }
   }
 
-  loadLog();
+  function loadLog(name) {
+    if (name) currentLogName = name;
+    logFile.value = currentLogName;
+    document.getElementById('logDownloadLink').href = `/settings/logs/${encodeURIComponent(currentLogName)}`;
+    logPrefs(true);
+    logEntries = [];
+    document.getElementById('logInfo').textContent = 'Loading…';
+    fetchLog(true);
+    clearInterval(logTimer);
+    if (LOG_TODAY.includes(currentLogName)) {
+      logTimer = setInterval(() => { if (!document.hidden) fetchLog(false); }, 3000);
+    }
+  }
+
+  function logChoiceChanged(scrollDown) {
+    logPrefs(true);
+    renderLog(scrollDown === true && logFollow.checked);
+  }
+
+  async function saveLogSettings() {
+    const button = document.getElementById('logSettingsSaveBtn');
+    const body = { max_mb: document.getElementById('logMaxMb').value, retention_days: document.getElementById('logRetentionDays').value };
+    const data = await withBusy(button, 'Saving...', () => notificationRequest('/settings/logs', 'POST', body));
+    if (!data.success) { showToast(data.message || 'Error saving the log settings', 'error'); return; }
+    showToast(`New file at ${data.max_mb} MB or each day; kept ${data.retention_days} days`, 'success');
+  }
+
+  var logFile = document.getElementById('logFile');
+  var logLevel = document.getElementById('logLevel');
+  var logSearch = document.getElementById('logSearch');
+  var logShowApi = document.getElementById('logShowApi');
+  var logFollow = document.getElementById('logFollow');
+  if (logFile) {
+    logPrefs(false);
+    loadLog();
+    // hx-boost swaps pages without unloading this script's timer; stop it when the log box is gone.
+    document.addEventListener('htmx:beforeSwap', () => clearInterval(logTimer), { once: true });
+  }
 
   // --- Notifications ---------------------------------------------------------------------
   var NOTIFICATION_SERVICES = {{ notification_services | tojson }};

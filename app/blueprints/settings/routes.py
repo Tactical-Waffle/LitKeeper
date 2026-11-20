@@ -58,6 +58,8 @@ def index() -> ResponseReturnValue:
         ai_cover_parallel_max=ai_cover.PARALLEL_MAX,
         ai_cover_prompts=ai_prompts.overview(),
         log_files=_log_file_list(),
+        log_settings=_log_settings(),
+        log_size_max=_log_limits()[0], log_days_max=_log_limits()[1],
         story_filter_terms=_load_story_filter_terms(),
         log_retention_days=_log_retention_days(),
         daily_download_limit=dq.get_daily_cap(),
@@ -69,53 +71,52 @@ def index() -> ResponseReturnValue:
     )
 
 
-_LOG_LABELS = {'litkeeper.log': 'Main Log', 'api.log': 'API Log'}
-
-
 def _log_retention_days() -> int:
     from app.services.logger import log_retention_days
     return log_retention_days()
 
 
+def _log_settings() -> dict:
+    from app.services.logger import log_settings
+    return log_settings()
+
+
+def _log_limits() -> tuple[int, int]:
+    from app.services.logger import MAX_LOG_MAX_MB, MAX_LOG_RETENTION_DAYS
+    return MAX_LOG_MAX_MB, MAX_LOG_RETENTION_DAYS
+
+
 def _log_file_list() -> list[dict]:
-    from app.services.logger import LOG_FILES, log_file_path
-    files = []
-    for name in LOG_FILES:
-        path = log_file_path(name)
-        size = os.path.getsize(path) if os.path.exists(path) else 0
-        if size >= 1024 * 1024:
-            shown = f'{size / (1024 * 1024):.1f} MB'
-        elif size >= 1024:
-            shown = f'{size / 1024:.0f} KB'
-        else:
-            shown = 'empty' if size == 0 else f'{size} B'
-        files.append({'name': name, 'label': _LOG_LABELS.get(name, name), 'size': shown})
-    return files
+    from app.services.logger import log_files
+    return log_files()
 
 
 @settings.route('/logs/<name>', methods=['GET'])
 def download_log(name: str) -> ResponseReturnValue:
-    """Download one of LitKeeper's own log files (only the names in LOG_FILES are allowed)."""
+    """Download one of LitKeeper's own log files, today's or a kept one (no other file can be named)."""
     from flask import abort, send_file
-    from app.services.logger import LOG_FILES, log_file_path
-    if name not in LOG_FILES:
+    from app.services.logger import LOG_FILES, is_log_file, log_file_path
+    if not is_log_file(name):
         abort(404)
     path = log_file_path(name)
     if not os.path.exists(path):
+        if name not in LOG_FILES:
+            abort(404)
         open(path, 'a').close()
     return send_file(path, mimetype='text/plain', as_attachment=True, download_name=name, max_age=0)
 
 
 LOG_TAIL_DEFAULT = 500
 LOG_TAIL_MAX = 5000
+LOG_ENTRIES_DEFAULT = 3000
 
 
 @settings.route('/logs/<name>/tail', methods=['GET'])
 def view_log(name: str) -> ResponseReturnValue:
-    """The newest lines of a log, for reading in Settings without downloading it."""
+    """The newest lines of a log, as plain lines."""
     from flask import abort
-    from app.services.logger import LOG_FILES, tail_log
-    if name not in LOG_FILES:
+    from app.services.logger import is_log_file, tail_log
+    if not is_log_file(name):
         abort(404)
     try:
         count = int(request.args.get('lines', LOG_TAIL_DEFAULT))
@@ -124,6 +125,32 @@ def view_log(name: str) -> ResponseReturnValue:
     count = max(1, min(count, LOG_TAIL_MAX))
     lines = tail_log(name, count)
     return jsonify({'success': True, 'name': name, 'lines': lines, 'count': len(lines)})
+
+
+@settings.route('/logs/<name>/entries', methods=['GET'])
+def log_entries(name: str) -> ResponseReturnValue:
+    """The newest entries of a log for the viewer, which filters and searches them in the browser."""
+    from flask import abort
+    from app.services.logger import is_log_file, log_entries as entries, log_files
+    if not is_log_file(name):
+        abort(404)
+    return jsonify({'success': True, 'name': name, 'entries': entries(name, LOG_ENTRIES_DEFAULT), 'files': log_files()})
+
+
+@settings.route('/logs', methods=['POST'])
+def save_logs_settings() -> ResponseReturnValue:
+    from app.services.logger import save_log_settings
+    data = request.get_json(silent=True) or {}
+    try:
+        values = save_log_settings(data.get('max_mb'), data.get('retention_days'))
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error saving log settings: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error saving the log settings'}), 500
+    log_action(f"Log settings saved: a new file at {values['max_mb']} MB or each day, kept {values['retention_days']} days")
+    return jsonify({'success': True, **values})
 
 
 @settings.route('/theme-preference', methods=['GET'])

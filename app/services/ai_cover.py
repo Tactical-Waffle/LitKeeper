@@ -254,11 +254,14 @@ def _headers(api_key: str = '') -> dict:
     return headers
 
 
-def _log_call(method: str, url: str, status: object, started: float) -> None:
-    """Record an OpenRouter call in api.log: the endpoint and result only, never the key or prompt."""
+def _endpoint(url: str) -> str:
+    return url.split(API, 1)[-1].lstrip('/') if url.startswith(API) else url
+
+
+def _log_call(method: str, url: str, status: object, started: float, number: int | None = None) -> None:
+    """Record an OpenRouter call's result in api.log: the endpoint, status and time, never the key."""
     from .logger import log_api_call
-    endpoint = url.split(API, 1)[-1].lstrip('/') if url.startswith(API) else url
-    log_api_call('OpenRouter', method, endpoint, status, (time.perf_counter() - started) * 1000)
+    log_api_call('OpenRouter', method, _endpoint(url), status, (time.perf_counter() - started) * 1000, number)
 
 
 def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
@@ -267,16 +270,19 @@ def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
     body = json.dumps(payload).encode()
     for attempt in range(3):
         request = urllib.request.Request(url, data=body, method='POST', headers=_headers(api_key))
+        from .logger import log_api_call_started
+        # The JSON sent goes on an "API data" line (Settings → Logs can hide it); the key is in a header, never logged.
+        number = log_api_call_started('OpenRouter', 'POST', _endpoint(url), payload)
         started = time.perf_counter()
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 result = json.loads(response.read().decode())
-            _log_call('POST', url, 200, started)
+            _log_call('POST', url, 200, started, number)
             if result.get('error'):
                 raise ValueError(f"OpenRouter: {result['error'].get('message', 'request failed')}")
             return result
         except urllib.error.HTTPError as error:
-            _log_call('POST', url, error.code, started)
+            _log_call('POST', url, error.code, started, number)
             detail = ''
             try:
                 detail = json.loads(error.read().decode()).get('error', {}).get('message', '')
@@ -291,7 +297,7 @@ def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
                 raise StopError('OpenRouter reports insufficient credits. Top up at openrouter.ai/settings/credits.')
             raise ValueError(f'OpenRouter error {error.code}{": " + detail if detail else ""}')
         except (urllib.error.URLError, TimeoutError) as error:
-            _log_call('POST', url, 'unreachable', started)
+            _log_call('POST', url, 'unreachable', started, number)
             if attempt < 2:
                 time.sleep(10 * (attempt + 1))
                 continue

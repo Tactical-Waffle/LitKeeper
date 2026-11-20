@@ -65,7 +65,8 @@ def create_app() -> Flask:
         duration = (time.perf_counter() - started) * 1000 if started else 0
         client = (request.headers.get('X-Forwarded-For') or request.remote_addr or '').split(',')[0].strip()
         try:
-            log_request(request.method, request.path, response.status_code, duration, client)
+            data = request.get_json(silent=True) if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') else None
+            log_request(request.method, request.path, response.status_code, duration, client, data)
         except Exception:
             pass
         return response
@@ -157,6 +158,14 @@ def create_app() -> Flask:
             cursor.execute("PRAGMA busy_timeout=30000")
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.close()
+
+    # Settings → Logs (file size limit and days kept) lives in the database, which is ready only now.
+    try:
+        with app.app_context():
+            from app.services.logger import log_settings, apply_log_settings
+            apply_log_settings(**log_settings())
+    except Exception:
+        pass
 
     with app.app_context():
         db.create_all()
