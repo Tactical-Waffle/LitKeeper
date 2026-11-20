@@ -35,6 +35,7 @@ def index() -> ResponseReturnValue:
     from app.services import notifier
     notification_connections = [notifier.public_view(c) for c in notifier.load_connections()]
     from app.services import ai_cover, ai_prompts
+    from app.services import download_queue_worker as dq
 
     return render_template(
         'settings.html',
@@ -58,6 +59,9 @@ def index() -> ResponseReturnValue:
         ai_cover_story_text=ai_cover.STORY_TEXT,
         ai_cover_lettering=ai_cover.LETTERING,
         ai_cover_prompts=ai_prompts.overview(),
+        daily_download_limit=dq.get_daily_cap(),
+        daily_download_default=dq.DEFAULT_MAX_DAILY_DOWNLOADS,
+        daily_download_max=dq.MAX_DAILY_DOWNLOADS_LIMIT,
     )
 
 
@@ -347,6 +351,27 @@ def save_opds_settings() -> ResponseReturnValue:
         db.session.rollback()
         log_error(f"Error saving OPDS settings: {str(e)}\n{traceback.format_exc()}")
         return jsonify({'success': False, 'message': 'Error saving OPDS settings'}), 500
+
+
+@settings.route('/daily-downloads', methods=['POST'])
+def save_daily_downloads() -> ResponseReturnValue:
+    from flask import current_app
+    from app.services import download_queue_worker as dq
+    data = request.get_json(silent=True) or {}
+    try:
+        limit = dq.save_daily_cap(data.get('limit'))
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error saving daily download limit: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'message': 'Error saving the daily download limit'}), 500
+    log_action(f"Daily download limit set to {limit}")
+    # Let the worker pick up a raised limit straight away instead of on its next poll.
+    worker = getattr(current_app, 'download_worker', None)
+    if worker:
+        worker.wake()
+    return jsonify({'success': True, 'limit': limit})
 
 
 @settings.route('/toggle-auto-update', methods=['POST'])

@@ -9,6 +9,55 @@ from flask import Flask
 from app.services.http_client import global_rate_limiter
 
 DEFAULT_MAX_DAILY_DOWNLOADS = 25
+MAX_DAILY_DOWNLOADS_LIMIT = 10000
+DAILY_CAP_KEY = 'max_daily_downloads'
+
+
+def env_daily_cap() -> Optional[int]:
+    """The MAX_DAILY_DOWNLOADS environment variable, if it holds a usable number."""
+    try:
+        value = int(os.environ['MAX_DAILY_DOWNLOADS'])
+    except (KeyError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def saved_daily_cap() -> Optional[int]:
+    """The limit saved in Settings, if any. Needs an app context."""
+    from app.models import AppConfig
+    cfg = AppConfig.query.filter_by(key=DAILY_CAP_KEY).first()
+    if not cfg:
+        return None
+    try:
+        value = int(cfg.get_value())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def get_daily_cap() -> int:
+    """Settings wins, then the MAX_DAILY_DOWNLOADS environment variable, then the default."""
+    return saved_daily_cap() or env_daily_cap() or DEFAULT_MAX_DAILY_DOWNLOADS
+
+
+def save_daily_cap(value) -> int:
+    """Save the limit from Settings. Raises ValueError for anything but a whole number in range."""
+    from app.models import AppConfig, db
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError('Enter a whole number.')
+    if number < 1 or number > MAX_DAILY_DOWNLOADS_LIMIT:
+        raise ValueError(f'Enter a number from 1 to {MAX_DAILY_DOWNLOADS_LIMIT}.')
+    cfg = AppConfig.query.filter_by(key=DAILY_CAP_KEY).first()
+    if not cfg:
+        cfg = AppConfig(key=DAILY_CAP_KEY, value_type='int', description='Maximum stories downloaded per day')
+        db.session.add(cfg)
+    cfg.value_type = 'int'
+    cfg.set_value(number)
+    db.session.commit()
+    return number
+
 
 class DownloadQueueWorker:
     """Background worker for processing download queue"""
@@ -90,10 +139,7 @@ class DownloadQueueWorker:
         log_action("Download queue worker stopped")
 
     def _get_daily_cap(self) -> int:
-        try:
-            return int(os.environ['MAX_DAILY_DOWNLOADS'])
-        except (KeyError, ValueError):
-            return DEFAULT_MAX_DAILY_DOWNLOADS
+        return get_daily_cap()
 
     def _reset_rate_limited_items(self):
         """Requeue rate-limited items that should now be allowed to proceed."""

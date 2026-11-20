@@ -23,7 +23,7 @@ Originally built as a simple EPUB downloader for e-readers, LitKeeper has evolve
 * **Story, Series, or Author URL:** The home page accepts any Literotica URL — individual story, series, or author profile. Pasting an author URL prompts a confirmation before queuing a scan of all their published stories.
 * **Combine Multiple URLs into One Story:** Expand the "Combine multiple URLs into one story" option on the home page to merge several chapter or part URLs into a single combined EPUB/HTML file.
 * **Download Queue:** All downloads are processed via a background queue. The queue page shows real-time status for pending, processing, completed, and failed items.
-* **Daily Download Cap & Rate Limiting:** To avoid overwhelming source servers, LitKeeper enforces a daily download cap (default: 25 stories). Items beyond the cap are marked `rate_limited` and automatically retried the following day. The cap can be overridden with the `MAX_DAILY_DOWNLOADS` environment variable.
+* **Daily Download Cap & Rate Limiting:** To avoid overwhelming source servers, LitKeeper enforces a daily download cap (default: 25 stories). Items beyond the cap are marked `rate_limited` and automatically retried the following day. The cap can be changed in **Settings → Downloads** (or with the `MAX_DAILY_DOWNLOADS` environment variable, which Settings overrides once saved).
 
 ### Watched Authors
 * **Author Scanning:** Paste a Literotica author profile URL to queue a full scan that downloads every story they've published. Each story is individually queued and downloaded.
@@ -141,7 +141,7 @@ mkdir -p ./data ./stories
 | `WEBAUTHN_RP_ID` | *(auto)* | Passkey relying party hostname (e.g. `myapp.example.com`). Auto-detected from the request — only set this if a reverse proxy masks the real hostname. Bare hostname only, no port or scheme. |
 | `WEBAUTHN_ORIGIN` | *(auto)* | Full origin for passkey verification (e.g. `https://myapp.example.com`). Auto-detected from the request — only set this if a reverse proxy masks the real hostname. |
 | `WEBAUTHN_RESET_CODE` | - | When set, enables `POST /auth/webauthn/reset` as an emergency passkey recovery endpoint. |
-| `MAX_DAILY_DOWNLOADS` | `25` | Maximum stories downloaded per day. The default is intentionally conservative to avoid hammering source servers — please be a good citizen before raising this. |
+| `MAX_DAILY_DOWNLOADS` | `25` | Maximum stories downloaded per day. Easier to change in Settings → Downloads; a limit saved there takes priority over this. The default is intentionally conservative to avoid hammering source servers — please be a good citizen before raising this. |
 
 ### Volume Mounts
 
