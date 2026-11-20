@@ -1,0 +1,56 @@
+## SWAG reverse-proxy file for litkeeparr
+# Copy to /config/nginx/proxy-confs/litkeeparr.subdomain.conf inside SWAG (drop ".sample"),
+# then restart SWAG.
+#
+# - The container must be called "litkeeparr" and sit on the same Docker network as SWAG.
+#   Don't publish port 5000 on the host for this; SWAG reaches it over the Docker network.
+# - server_name is the address you visit. It's set to litkeeper.* so an existing
+#   litkeeper.<your-domain> address, its passkeys and e-reader (OPDS) links keep working.
+#   Passkeys are tied to the address, so changing it means setting them up again.
+#   If you replace an old litkeeper.subdomain.conf with this file, delete the old one,
+#   because two files with the same server_name conflict.
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+
+    server_name litkeeper.*;
+
+    include /config/nginx/ssl.conf;
+
+    # Allow large uploads (story files, covers).
+    client_max_body_size 0;
+
+    # LitKeeper's own lock is a passkey set in Settings. To put a login in front of
+    # it as well, enable ONE of these, plus the matching line in "location /" below.
+    #include /config/nginx/authelia-server.conf;
+    #include /config/nginx/authentik-server.conf;
+
+    location / {
+        # For a simple password instead, enable the next two lines
+        # (create the file with: docker exec -it swag htpasswd -c /config/nginx/.htpasswd <user>).
+        #auth_basic "Restricted";
+        #auth_basic_user_file /config/nginx/.htpasswd;
+
+        #include /config/nginx/authelia-location.conf;
+        #include /config/nginx/authentik-location.conf;
+
+        include /config/nginx/proxy.conf;
+        include /config/nginx/resolver.conf;
+        set $upstream_app litkeeparr;
+        set $upstream_port 5000;
+        set $upstream_proto http;
+        proxy_pass $upstream_proto://$upstream_app:$upstream_port;
+    }
+
+    # E-readers (KOReader and other OPDS apps) can't get past Authelia, Authentik or a
+    # browser login, and the OPDS feed has its own password in Settings, so it skips them.
+    location /opds {
+        include /config/nginx/proxy.conf;
+        include /config/nginx/resolver.conf;
+        set $upstream_app litkeeparr;
+        set $upstream_port 5000;
+        set $upstream_proto http;
+        proxy_pass $upstream_proto://$upstream_app:$upstream_port;
+    }
+}

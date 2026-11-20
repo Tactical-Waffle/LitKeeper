@@ -109,6 +109,17 @@ then try **AI Cover** on one story. Each cover costs a few cents of OpenRouter c
 
 ---
 
+## Behind SWAG (reverse proxy)
+
+If you reach LitKeeper through SWAG at an address like `litkeeper.<your-domain>`:
+1. Leave out the `ports:` lines. SWAG reaches the container over the Docker network, so nothing
+   needs to be open on the server, and port 5000 stays free for other apps.
+2. Copy [deploy/swag/litkeeparr.subdomain.conf.sample](deploy/swag/litkeeparr.subdomain.conf.sample) to
+   SWAG's `/config/nginx/proxy-confs/litkeeparr.subdomain.conf`, delete any old
+   `litkeeper.subdomain.conf`, then restart SWAG.
+3. Keep the same address as before. Passkeys (the lock in Settings) are tied to the address, so
+   changing it means setting them up again.
+
 ## Updating litkeeparr later
 
 Once a new build has finished in the Actions tab, run this on the server:
