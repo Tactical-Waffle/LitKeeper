@@ -1,45 +1,43 @@
 # Deploying "litkeeparr" on your Docker server
 
-These steps build a Docker image called **litkeeparr** from your local `litkeeparr` branch, then
-run it on your server. That branch is LitKeeper plus the new Settings → Notifications page, with the
-folders inside the container renamed from `/litkeeper` to `/litkeeparr`.
+litkeeparr is LitKeeper plus the extra features on the `litkeeparr` branch: the Settings → Notifications
+page and AI covers. The folders inside the container are named `/litkeeparr` instead of `/litkeeper`.
 
-Nothing here touches GitHub. The code goes straight from this Mac to your server.
+**How it gets to your server:** every time the `litkeeparr` branch is pushed to GitHub, GitHub builds a
+fresh image and publishes it as:
+
+```
+ghcr.io/tactical-waffle/litkeeparr:latest
+```
+
+Your server just downloads that image, the same way you'd install Sonarr. You can follow each build in
+the fork's **Actions** tab: https://github.com/Tactical-Waffle/LitKeeper/actions
 
 **Before you start, replace these placeholders in the commands:**
 - `you@your-server`: how you normally connect to the server with `ssh`, for example `chris@192.168.1.20`.
-- Port `5000`: change the left-hand number in step 3 if something on the server already uses port 5000.
+- Port `5000`: change the left-hand number in step 2 if something on the server already uses port 5000.
 
 The commands assume you can reach the server with `ssh` and it has Docker with
 `docker compose`. If you manage it through a web panel (Portainer, Unraid, Synology and so on),
-the same idea applies: copy the folder over, then create a stack from the compose file in step 3.
+create a stack from the compose file in step 2 instead.
 
 ---
 
-## 1. Package the code (on this Mac)
+## 0. One-time GitHub setup
 
-In Terminal, go to the LitKeeper folder:
+1. **Let the image be downloaded without signing in.** GitHub may make a new image private. After the
+   first build finishes, open https://github.com/Tactical-Waffle?tab=packages, choose **litkeeparr**,
+   then **Package settings → Change visibility → Public**. The code is already public, so this
+   doesn't reveal anything new.
 
-```bash
-cd ~/Projects/Codex/LitKeeper
-```
+   *Prefer to keep it private?* Make a GitHub token with only the `read:packages` permission
+   (GitHub → Settings → Developer settings → Personal access tokens), then sign the server in once:
+   ```bash
+   docker login ghcr.io -u Tactical-Waffle
+   ```
+   and paste the token when it asks for a password.
 
-Make a zipped copy of the committed code on the `litkeeparr` branch. It leaves out
-anything not committed, such as test data and draft notes:
-
-```bash
-git archive --format=tar.gz -o ~/Desktop/litkeeparr.tar.gz litkeeparr
-```
-
-You now have `litkeeparr.tar.gz` on your Desktop.
-
-## 2. Copy it to the server and unpack it
-
-Copy the file over:
-
-```bash
-scp ~/Desktop/litkeeparr.tar.gz you@your-server:~/
-```
+## 1. Make the folders (on the server)
 
 Log in to the server:
 
@@ -47,18 +45,13 @@ Log in to the server:
 ssh you@your-server
 ```
 
-**The rest of the commands run on the server.** Make a folder for litkeeparr, with the code in
-a `src` subfolder:
+**The rest of the commands run on the server.**
 
 ```bash
-mkdir -p ~/litkeeparr/src ~/litkeeparr/data ~/litkeeparr/stories
+mkdir -p ~/litkeeparr/data ~/litkeeparr/stories
 ```
 
-```bash
-tar -xzf ~/litkeeparr.tar.gz -C ~/litkeeparr/src
-```
-
-## 3. Create the compose file
+## 2. Create the compose file
 
 ```bash
 nano ~/litkeeparr/docker-compose.yml
@@ -69,8 +62,7 @@ Paste this in, then save with **Ctrl+O**, **Enter**, **Ctrl+X**:
 ```yaml
 services:
   litkeeparr:
-    build: ./src                 # build the image from your copy of the code
-    image: litkeeparr:latest     # ...and call the image "litkeeparr"
+    image: ghcr.io/tactical-waffle/litkeeparr:latest
     container_name: litkeeparr
     restart: unless-stopped
     ports:
@@ -85,19 +77,15 @@ services:
 The right-hand side of each volume line must say `/litkeeparr/...`, to match the folder names inside
 this image. The official LitKeeper image uses `/litkeeper/...` instead.
 
-Notifications don't need anything in this file. You set them up in the app afterwards (step 5).
+Notifications and AI covers don't need anything in this file. You set them up in the app afterwards.
 
-## 4. Build and start it
-
-```bash
-cd ~/litkeeparr
-```
+## 3. Start it
 
 ```bash
-docker compose up -d --build
+cd ~/litkeeparr && docker compose pull && docker compose up -d
 ```
 
-The first build takes a few minutes. Watch it start up:
+Watch it start up:
 
 ```bash
 docker compose logs -f
@@ -106,15 +94,36 @@ docker compose logs -f
 Wait until you see `Starting application...` and the Gunicorn lines, then press **Ctrl+C** to stop
 watching. The app keeps running.
 
-## 5. Open it and set up notifications
+## 4. Open it and set things up
 
-Go to `http://<server-ip>:5000` in your browser, then **Settings → Notifications → Add Notification**:
+Go to `http://<server-ip>:5000` in your browser.
+
+**Notifications:** Settings → Notifications → Add Notification:
 1. Choose **Pushover**.
 2. Paste your **User Key** and **API Token** (your application's token from pushover.net).
 3. Press **Test**. A message should arrive on your phone.
 4. Press **Save**.
 
+**AI covers (optional):** Settings → AI Covers. Paste your OpenRouter key, press **Check Key & Models**,
+then try **AI Cover** on one story. Each cover costs a few cents of OpenRouter credit.
+
 ---
+
+## Updating litkeeparr later
+
+Once a new build has finished in the Actions tab, run this on the server:
+
+```bash
+cd ~/litkeeparr && docker compose pull && docker compose up -d
+```
+
+Your `data` and `stories` folders aren't touched by this.
+
+**Automatic updates (optional):** a tool like Watchtower can check for a new image and restart the
+container for you, so you never have to run the command above.
+
+**Going back to an older build:** every build is also tagged with its short commit id (for example
+`ghcr.io/tactical-waffle/litkeeparr:0f0cb95`). Put that tag in the `image:` line instead of `latest`.
 
 ## Already running the official LitKeeper on this server?
 
@@ -130,42 +139,34 @@ time: they share one database file, and two apps writing to it at once can damag
    ```bash
    cp -a /path/to/old/stories/. ~/litkeeparr/stories/
    ```
-3. Start litkeeparr (step 4). The old folders stay untouched as a backup.
+3. Start litkeeparr (step 3). The old folders stay untouched as a backup.
 
-This change doesn't alter the database layout, so you can switch back to the official image later
+These changes don't alter the database layout, so you can switch back to the official image later
 with the same data.
-
-## Updating litkeeparr later
-
-When there are new commits on the branch, repeat step 1 and the `scp` in step 2 on the Mac.
-Then on the server:
-
-```bash
-rm -rf ~/litkeeparr/src && mkdir ~/litkeeparr/src
-```
-
-```bash
-tar -xzf ~/litkeeparr.tar.gz -C ~/litkeeparr/src
-```
-
-```bash
-cd ~/litkeeparr && docker compose up -d --build
-```
-
-Your `data` and `stories` folders aren't touched by this.
 
 ## Going back to the official LitKeeper
 
 In `~/litkeeparr/docker-compose.yml`:
-1. Delete the `build: ./src` line.
-2. Change the image line to `image: ghcr.io/redwoodstory/litkeeper:latest`.
-3. Change `/litkeeparr/` back to `/litkeeper/` in both volume lines. The official image uses the old folder names.
+1. Change the image line to `image: ghcr.io/redwoodstory/litkeeper:latest`.
+2. Change `/litkeeparr/` back to `/litkeeper/` in both volume lines. The official image uses the old folder names.
 
 Then run:
 
 ```bash
-cd ~/litkeeparr && docker compose up -d
+cd ~/litkeeparr && docker compose pull && docker compose up -d
 ```
 
-Your library and settings stay. Saved notification entries stay in the database but aren't used
-by the official version. That version only reads `NOTIFICATION_URLS`.
+Your library and settings stay. Saved notification entries and AI cover settings stay in the database
+but aren't used by the official version.
+
+## Building it yourself instead (without GitHub)
+
+If you ever want to build on the server from the code directly:
+
+```bash
+git clone -b litkeeparr https://github.com/Tactical-Waffle/LitKeeper.git ~/litkeeparr/src
+```
+
+Then in the compose file, add `build: ./src` above the `image:` line and change the image to
+`litkeeparr:latest`, and start it with `docker compose up -d --build`. To update, run `git pull` in
+`~/litkeeparr/src` and the same `docker compose up -d --build`.

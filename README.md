@@ -70,10 +70,9 @@ If you are migrating from an older V1 instance of LitKeeper, please refer to the
 1. Create a docker-compose.yml file:
 ```yaml
 services:
-  litkeeper:
-    # litkeeparr is built from this repository; see DEPLOY-LITKEEPARR.md
-    build: .
-    image: litkeeparr:latest
+  litkeeparr:
+    # Built by GitHub on every push to the litkeeparr branch; see DEPLOY-LITKEEPARR.md
+    image: ghcr.io/tactical-waffle/litkeeparr:latest
     restart: unless-stopped
     ports:
       - "5000:5000"
