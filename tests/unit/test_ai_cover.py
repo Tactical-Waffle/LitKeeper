@@ -171,6 +171,36 @@ class TestStoryDetails:
         assert 'Part 1 paragraph 9' in text      # all of part 1
         assert 'Part 3 paragraph 9' not in text  # only the start of later parts
 
+    def test_excerpt_settings_parts_percent_and_limit(self, app: Flask, story) -> None:
+        with app.app_context():
+            assert ai_cover.settings()['excerpt_parts'] == 5 and ai_cover.settings()['excerpt_percent'] == 20
+            ai_cover.save_settings({'excerpt_percent': '50', 'excerpt_parts': '1', 'excerpt_words': '40000'})
+            text = ai_cover.story_details(_get_story(story), 'excerpts')
+            assert 'Part 2 (first 50%):' in text and 'Part 3' not in text
+            assert 'Part 2 paragraph 4' in text and 'Part 2 paragraph 6' not in text
+            ai_cover.save_settings({'excerpt_parts': ''})   # blank: every later part
+            assert ai_cover.settings()['excerpt_parts'] is None
+            assert 'Part 3 (first 50%):' in ai_cover.story_details(_get_story(story), 'excerpts')
+            assert ai_cover.excerpt_label(ai_cover.settings()) == \
+                'All of part 1 plus the first 50% of every later part (up to 40,000 words)'
+            ai_cover.save_settings({'excerpt_words': '1000'})
+            text = ai_cover.story_details(_get_story(story), 'excerpts')
+            passages = text.split('Passages from the story:\n')[1].splitlines()
+            story_words = sum(len(line.split()) for line in passages if not line.startswith('Part ') or 'paragraph' in line)
+            assert story_words == 1000  # part 1 (540) and part 2 (270) whole, part 3 cut at the limit
+            assert 'Part 3 paragraph 0' in text and 'Part 3 paragraph 4' not in text
+
+    def test_default_label(self, app: Flask) -> None:
+        with app.app_context():
+            assert ai_cover.story_text_options(ai_cover.settings())['excerpts'][0] == \
+                'All of part 1 plus the first 20% of the next 5 parts (up to 40,000 words)'
+
+    @pytest.mark.parametrize('form', [{'excerpt_percent': '0'}, {'excerpt_percent': '101'}, {'excerpt_parts': '0'},
+                                      {'excerpt_parts': 'some'}, {'excerpt_words': '500'}, {'excerpt_words': 'lots'}])
+    def test_excerpt_settings_rejected(self, app: Flask, form: dict) -> None:
+        with app.app_context(), pytest.raises(ValueError):
+            ai_cover.save_settings(form)
+
     def test_opening_only(self, app: Flask, story) -> None:
         with app.app_context():
             text = ai_cover.story_details(_get_story(story), 'opening')

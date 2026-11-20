@@ -486,6 +486,16 @@
               {% endfor %}
             </select>
           </div>
+          <div id="aiCoverExcerptOptions" class="sm:col-span-2 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-gray-700 dark:text-gray-300">
+            <span>All of part 1 plus the first</span>
+            <input type="number" id="aiCoverExcerptPercent" min="1" max="100" step="1" inputmode="numeric" value="{{ ai_cover_settings.excerpt_percent }}" aria-label="Percent of each later part" class="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+            <span>% of the next</span>
+            <input type="number" id="aiCoverExcerptParts" min="1" max="999" step="1" inputmode="numeric" placeholder="all" value="{{ ai_cover_settings.excerpt_parts if ai_cover_settings.excerpt_parts else '' }}" aria-label="How many later parts (blank for all)" class="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+            <span>parts/chapters (up to</span>
+            <input type="number" id="aiCoverExcerptWords" min="1000" max="200000" step="1000" inputmode="numeric" value="{{ ai_cover_settings.excerpt_words }}" aria-label="Word limit" class="w-28 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+            <span>words)</span>
+            <span class="w-full text-xs text-gray-500 dark:text-gray-400">Used when the option above is “All of part 1 plus…”. Leave the number of parts blank to take that share of every later part.</span>
+          </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverLettering">Cover lettering</label>
             <select id="aiCoverLettering"
@@ -506,6 +516,14 @@
             {% endfor %}
           </select>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">When you ask for several covers, this many are made side by side. It's faster but costs the same. Lower it if OpenRouter starts refusing with "too many requests".</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3 pt-1">
+          <button type="button" id="aiCoverMissingBtn" onclick="makeMissingAiCovers()"
+            class="px-4 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-slate-50 dark:hover:bg-gray-700">
+            Make AI covers for all books without one
+          </button>
+          <span id="aiCoverMissingCount" class="text-xs text-gray-500 dark:text-gray-400">{{ ai_covers_missing }} {{ 'book has' if ai_covers_missing == 1 else 'books have' }} no AI cover</span>
         </div>
 
         <div class="space-y-2 pt-1">
@@ -1010,6 +1028,18 @@
     showToast(data.auto_mark_read ? 'Stories are marked read at the end' : 'Use Mark as Read at the end of a story', 'success');
   }
 
+  async function makeMissingAiCovers() {
+    const button = document.getElementById('aiCoverMissingBtn');
+    const counted = await notificationRequest('/api/ai-covers/missing', 'GET');
+    if (!counted.success) { showToast(counted.message || 'Could not count the books', 'error'); return; }
+    if (!counted.count) { showToast('Every book already has an AI cover', 'success'); return; }
+    if (!confirm(`Make AI covers for ${counted.count} ${counted.count === 1 ? 'book' : 'books'}?\n\nEach cover costs OpenRouter credit. You can follow and cancel them on the Queue page.`)) return;
+    const data = await withBusy(button, 'Queuing...', () => notificationRequest('/api/ai-covers/missing', 'POST', {}));
+    if (!data.success) { showToast(data.message || 'Could not queue the covers', 'error'); return; }
+    document.getElementById('aiCoverMissingCount').textContent = `${data.queued} queued — see the Queue page`;
+    showToast(`${data.queued} AI ${data.queued === 1 ? 'cover' : 'covers'} queued`, 'success');
+  }
+
   async function saveDownloadDelay() {
     const button = document.getElementById('downloadDelaySaveBtn');
     const input = document.getElementById('downloadDelay');
@@ -1100,6 +1130,9 @@
       image_model: document.getElementById('aiCoverImageModel').value,
       fallback_models: document.getElementById('aiCoverFallbacks').value,
       story_text: document.getElementById('aiCoverStoryText').value,
+      excerpt_percent: document.getElementById('aiCoverExcerptPercent').value,
+      excerpt_parts: document.getElementById('aiCoverExcerptParts').value,
+      excerpt_words: document.getElementById('aiCoverExcerptWords').value,
       lettering: document.getElementById('aiCoverLettering').value,
       auto: document.getElementById('aiCoverAuto').checked,
       retry_unlettered: document.getElementById('aiCoverRetryUnlettered').checked,
@@ -1109,6 +1142,10 @@
     const data = await withBusy(button, 'Saving...', () => aiCoverRequest('/settings/ai-covers', body));
     if (!data.success) { showToast(data.message || 'Error saving AI cover settings', 'error'); return; }
     aiCoverKeySaved(data.settings);
+    const storyText = document.getElementById('aiCoverStoryText');
+    const excerptOption = storyText && storyText.querySelector('option[value="excerpts"]');
+    if (excerptOption && data.excerpt_label) excerptOption.textContent = data.excerpt_label;
+    document.getElementById('aiCoverExcerptParts').value = data.settings.excerpt_parts || '';
     document.getElementById('aiCoverTextModel').value = data.settings.text_model;
     document.getElementById('aiCoverImageModel').value = data.settings.image_model;
     document.getElementById('aiCoverFallbacks').value = data.settings.fallback_models.join('\n');

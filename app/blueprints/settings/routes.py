@@ -53,7 +53,8 @@ def index() -> ResponseReturnValue:
         notification_default_events=notifier.DEFAULT_EVENTS,
         notification_env_count=notifier.env_url_count(),
         ai_cover_settings=ai_cover.public_settings(),
-        ai_cover_story_text=ai_cover.STORY_TEXT,
+        ai_cover_story_text=ai_cover.story_text_options(ai_cover.settings()),
+        ai_covers_missing=_ai_covers_missing(),
         ai_cover_lettering=ai_cover.LETTERING,
         ai_cover_parallel_max=ai_cover.PARALLEL_MAX,
         ai_cover_prompts=ai_prompts.overview(),
@@ -448,6 +449,14 @@ STORY_FILTER_MAX_TERMS = 200
 STORY_FILTER_MAX_LENGTH = 100
 
 
+def _ai_covers_missing() -> int:
+    from app.services import ai_cover
+    try:
+        return len(ai_cover.stories_without_cover())
+    except Exception:
+        return 0
+
+
 def _ai_stats() -> dict:
     from app.services import ai_stats
     try:
@@ -717,7 +726,8 @@ def save_ai_cover_settings() -> ResponseReturnValue:
         log_error(f"Error saving AI cover settings: {str(e)}\n{traceback.format_exc()}")
         return jsonify({'success': False, 'message': 'Error saving AI cover settings'}), 500
     log_action("AI cover settings updated")
-    return jsonify({'success': True, 'settings': ai_cover.public_settings()})
+    return jsonify({'success': True, 'settings': ai_cover.public_settings(),
+                    'excerpt_label': ai_cover.excerpt_label(ai_cover.settings())})
 
 
 @settings.route('/ai-covers/check', methods=['POST'])

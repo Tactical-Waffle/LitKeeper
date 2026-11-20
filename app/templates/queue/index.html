@@ -4,7 +4,8 @@
 
 {% block header %}
 <header class="mb-3 md:mb-4">
-  <div class="flex items-center justify-between gap-4">
+  {# pr-12 on phones: room for the floating light/dark button in the corner. #}
+  <div class="flex items-center justify-between gap-4 pr-12 md:pr-0">
     <h2 class="font-playfair text-2xl font-medium text-gray-900 dark:text-white tracking-wide">Queue</h2>
     <button onclick="clearHistory()" title="Remove finished and failed downloads from this list"
       class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300

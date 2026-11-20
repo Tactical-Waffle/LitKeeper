@@ -40,10 +40,12 @@ MODEL_NAME = re.compile(r'[@\w./:-]+')
 # How much of the story the text model reads: (label, words in all).
 STORY_TEXT = {
     'opening': ('Opening only', 1200),
-    'excerpts': ('All of part 1 plus the first 20% of each later part', 40000),
+    'excerpts': ('All of part 1 plus the first 20% of the next 5 parts (up to 40,000 words)', 40000),
     'whole': ('The whole story (up to 40,000 words)', 40000),
 }
-LATER_PART_SHARE = 0.2
+LATER_PART_SHARE = 0.2   # The excerpt defaults: 20% of each of the next 5 parts, 40,000 words in all.
+EXCERPT_DEFAULTS = {'excerpt_percent': 20, 'excerpt_parts': 5, 'excerpt_words': 40000}
+EXCERPT_WORDS_RANGE = (1000, 200000)
 LETTERING = {
     'image': 'The image model letters the title and author',
     'litkeeper': 'LitKeeper adds the title and author',
@@ -51,7 +53,7 @@ LETTERING = {
 DEFAULTS = {
     'api_key': '', 'text_model': DEFAULT_TEXT_MODEL, 'image_model': DEFAULT_IMAGE_MODEL, 'fallback_models': [],
     'auto': True, 'story_text': 'excerpts', 'lettering': 'image', 'retry_unlettered': True, 'retry_softer': True,
-    'parallel': 3,
+    'parallel': 3, **EXCERPT_DEFAULTS,
 }
 PARALLEL_MAX = 5   # covers made at the same time; OpenRouter's rate limits make more pointless
 
@@ -75,6 +77,21 @@ def settings() -> dict:
     if not saved.get('auto_chosen'):
         saved.pop('auto', None)
     return {**DEFAULTS, **saved}
+
+
+def excerpt_label(config: Optional[dict] = None) -> str:
+    """The excerpt option as Settings shows it, e.g. "All of part 1 plus the first 20% of the next 5 parts
+    (up to 40,000 words)"; with no number of parts, "… of every later part …"."""
+    config = {**EXCERPT_DEFAULTS, **(config or {})}
+    parts = config.get('excerpt_parts')
+    which = 'every later part' if not parts else ('the next part' if parts == 1 else f'the next {parts} parts')
+    return f"All of part 1 plus the first {config['excerpt_percent']}% of {which} (up to {config['excerpt_words']:,} words)"
+
+
+def story_text_options(config: Optional[dict] = None) -> dict:
+    """STORY_TEXT with the excerpt option's label and word limit from the settings."""
+    config = {**EXCERPT_DEFAULTS, **(config or {})}
+    return {**STORY_TEXT, 'excerpts': (excerpt_label(config), config['excerpt_words'])}
 
 
 def masked_key(key: str) -> str:
@@ -128,6 +145,35 @@ def save_settings(form: dict) -> dict:
         new['parallel'] = parallel
     if 'fallback_models' in form:
         new['fallback_models'] = _model_names(form.get('fallback_models'), 'fallback image models', 5)
+    if 'excerpt_percent' in form:
+        try:
+            percent = int(str(form.get('excerpt_percent')).strip().rstrip('%'))
+        except (TypeError, ValueError):
+            raise ValueError('The share of each later part must be a whole number of percent.')
+        if not 1 <= percent <= 100:
+            raise ValueError('The share of each later part must be from 1% to 100%.')
+        new['excerpt_percent'] = percent
+    if 'excerpt_parts' in form:
+        raw = str(form.get('excerpt_parts') if form.get('excerpt_parts') is not None else '').strip()
+        if raw == '':
+            new['excerpt_parts'] = None   # Blank: every later part.
+        else:
+            try:
+                parts = int(raw)
+            except ValueError:
+                raise ValueError('The number of later parts must be a whole number, or blank for all of them.')
+            if not 1 <= parts <= 999:
+                raise ValueError('The number of later parts must be from 1 to 999, or blank for all of them.')
+            new['excerpt_parts'] = parts
+    if 'excerpt_words' in form:
+        try:
+            words = int(str(form.get('excerpt_words')).replace(',', '').strip())
+        except (TypeError, ValueError):
+            raise ValueError('The word limit must be a whole number.')
+        low, high = EXCERPT_WORDS_RANGE
+        if not low <= words <= high:
+            raise ValueError(f'The word limit must be from {low:,} to {high:,} words.')
+        new['excerpt_words'] = words
     if form.get('story_text') in STORY_TEXT:
         new['story_text'] = form['story_text']
     if form.get('lettering') in LETTERING:
@@ -414,8 +460,11 @@ def _first_words(paragraphs, limit: int) -> str:
 
 def story_details(story, amount: Optional[str] = None) -> str:
     """Title, category, tags, description and story text for the text model."""
-    amount = amount if amount in STORY_TEXT else settings().get('story_text', 'excerpts')
-    budget = STORY_TEXT.get(amount, STORY_TEXT['excerpts'])[1]
+    config = settings()
+    amount = amount if amount in STORY_TEXT else config.get('story_text', 'excerpts')
+    budget = story_text_options(config).get(amount, STORY_TEXT['excerpts'])[1]
+    share = (config.get('excerpt_percent') or EXCERPT_DEFAULTS['excerpt_percent']) / 100
+    later_parts = config.get('excerpt_parts')  # None: every later part.
     chapters = _chapters(story)
     tags = ', '.join(tag.name for tag in story.tags[:15])
     head = f'Title: {story.title}\n'
@@ -432,14 +481,16 @@ def story_details(story, amount: Optional[str] = None) -> str:
         return head + f'Opening of the story:\n{_first_words([p for c in chapters for p in c.get("paragraphs", [])], budget)}'
     text, used = [], 0
     for index, chapter in enumerate(chapters):
+        if amount == 'excerpts' and later_parts and index > later_parts:
+            break
         paragraphs = chapter.get('paragraphs', [])
         words = sum(len(str(p).split()) for p in paragraphs)
-        wanted = words if amount == 'whole' or index == 0 else max(1, round(words * LATER_PART_SHARE))
+        wanted = words if amount == 'whole' or index == 0 else max(1, round(words * share))
         part = _first_words(paragraphs, min(wanted, budget - used))
         if not part:
             break
         label = '' if amount == 'whole' else (' (start)' if index == 0 and len(part.split()) < words
-                                              else ' (complete)' if index == 0 else ' (first 20%)')
+                                              else ' (complete)' if index == 0 else f' (first {round(share * 100)}%)')
         text.append(f'Part {chapter.get("number") or index + 1}{label}:\n{part}')
         used += len(part.split())
     return head + 'Passages from the story:\n' + '\n\n'.join(text)
@@ -661,6 +712,30 @@ def queue_overview() -> dict:
                           for i, a in _active.items()), key=lambda r: r['started'])
         waiting = [{'story_id': i, 'queued_at': _queued_at.get(i, '')} for i in _queue]
     return {'running': running, 'waiting': waiting, 'recent': recent_results()}
+
+
+def stories_without_cover() -> list[int]:
+    """Ids of stories with no AI cover yet that aren't being made or waiting. Needs an app context."""
+    from app.models import Story
+    with _lock:
+        busy = set(_active) | set(_queue)
+    return [story.id for story in Story.query.order_by(Story.created_at.desc()).all()
+            if story.id not in busy and not os.path.exists(art_paths(story)[0])]
+
+
+def make_missing(app) -> int:
+    """Queue an AI cover for every story without one. Returns how many were queued."""
+    if not settings()['api_key']:
+        raise ValueError('Add an OpenRouter API key in Settings → AI Covers first.')
+    queued = 0
+    for story_id in stories_without_cover():
+        try:
+            start(app, story_id)
+            queued += 1
+        except ValueError:
+            pass  # Started meanwhile.
+    log_action(f'AI covers queued for {queued} stories without one')
+    return queued
 
 
 def parallel_limit() -> int:

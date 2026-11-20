@@ -303,3 +303,25 @@ class TestAiStatistics:
             assert ai_stats.backfill() == 0
             models = {m['model']: m for m in ai_stats.tables()['models']}
         assert models['i/m']['cost']['all'] == pytest.approx(0.05) and models['t/m']['cost']['all'] == 0
+
+
+@pytest.mark.integration
+class TestCoversForBooksWithout:
+
+    def test_count_and_queue_all_without_one(self, app, client, add_story) -> None:
+        from app.utils import paths
+        first, second = add_story('Has Cover'), add_story('Needs Cover')
+        with app.app_context():
+            from app.models import Story, db
+            art = ai_cover.art_paths(db.session.get(Story, first))[0]
+        Path(art).parent.mkdir(parents=True, exist_ok=True)
+        Path(art).write_bytes(b'\xff\xd8\xff')
+        assert client.get('/api/ai-covers/missing').get_json()['count'] == 1
+        assert client.post('/api/ai-covers/missing').status_code == 400  # no API key yet
+        with app.app_context():
+            ai_cover.save_settings({'api_key': 'sk-or-v1-' + 'a' * 40})
+        with patch.object(ai_cover, 'start') as start:
+            data = client.post('/api/ai-covers/missing').get_json()
+        assert data == {'success': True, 'queued': 1}
+        assert start.call_args.args[1] == second
+        assert 'id="aiCoverMissingBtn"' in client.get('/settings/').get_data(as_text=True)

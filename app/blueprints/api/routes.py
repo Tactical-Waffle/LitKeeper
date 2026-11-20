@@ -2519,6 +2519,19 @@ def use_plain_cover(story_id: int) -> ResponseReturnValue:
     return jsonify({"success": True, **ai_cover.info(story)})
 
 
+@api.route("/ai-covers/missing", methods=['GET', 'POST'])
+def ai_covers_missing() -> ResponseReturnValue:
+    """GET: how many stories have no AI cover yet. POST: queue an AI cover for every one of them."""
+    from app.services import ai_cover
+    if request.method == 'GET':
+        return jsonify({"success": True, "count": len(ai_cover.stories_without_cover())})
+    try:
+        queued = ai_cover.make_missing(current_app._get_current_object())
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+    return jsonify({"success": True, "queued": queued})
+
+
 BULK_ACTIONS = ('delete', 'regenerate_covers', 'ai_covers', 'auto_update_on', 'auto_update_off')
 BULK_MAX_STORIES = 1000
 
