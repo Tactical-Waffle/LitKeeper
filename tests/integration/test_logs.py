@@ -11,6 +11,9 @@ from flask import Flask
 from flask.testing import FlaskClient
 
 from app.services import logger as logs
+import re
+
+re_line = re.compile(r'^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d INFO Hello$')
 
 pytestmark = [pytest.mark.filterwarnings('ignore:datetime.datetime.utcnow:DeprecationWarning'),
               pytest.mark.filterwarnings('ignore::sqlalchemy.exc.LegacyAPIWarning')]
@@ -124,26 +127,37 @@ class TestApiDataAndViewer:
 
     def test_incoming_api_json_on_its_own_line_with_secrets_hidden(self, app: Flask, client: FlaskClient) -> None:
         logs.setup_file_logging()
-        path = Path(logs.log_file_path('api.log'))
+        path = Path(logs.log_file_path('litkeeper.log'))
         path.write_text('')
         client.post('/api/story/99999999/queue', json={'in_queue': True, 'api_key': 'sk-should-not-appear'})
         text = path.read_text()
-        request_line = next(l for l in text.splitlines() if 'POST /api/story/99999999/queue 404' in l)
-        number = request_line.split(' - ')[-1].split()[0]
+        request_line = next(l for l in text.splitlines() if 'POST /api/story/99999999/queue → 404' in l)
+        number = request_line.split(' INFO ')[1].split()[0]
         assert number.startswith('#')
         data_line = next(l for l in text.splitlines() if f'API data {number} sent:' in l)
         assert '"in_queue": true' in data_line and 'sk-should-not-appear' not in data_line and '(hidden)' in data_line
+        entries = client.get('/settings/logs/litkeeper.log/entries').get_json()['entries']
+        assert [e['api_data'] for e in entries if number in e['text']] == [False, True]
 
     def test_outgoing_call_lines(self, app: Flask) -> None:
         logs.setup_file_logging()
-        path = Path(logs.log_file_path('api.log'))
+        path = Path(logs.log_file_path('litkeeper.log'))
         path.write_text('')
         number = logs.log_api_call_started('OpenRouter', 'POST', 'chat/completions', {'model': 'm', 'messages': ['x' * 5000]})
         logs.log_api_call('OpenRouter', 'POST', 'chat/completions', 200, 1234, number)
+        logs.log_api_call('OpenRouter', 'POST', 'chat/completions', 429, 50, number)
         lines = path.read_text().splitlines()
-        assert f'-> #{number} OpenRouter POST chat/completions started' in lines[0]
+        assert lines[0].endswith(f'INFO API call #{number} started: OpenRouter POST chat/completions')
         assert f'API data #{number} sent:' in lines[1] and 'more characters' in lines[1]
-        assert f'-> #{number} OpenRouter POST chat/completions 200 1234 ms' in lines[2]
+        assert lines[2].endswith(f'INFO API call #{number}: OpenRouter POST chat/completions → 200 in 1.2 s')
+        assert ' WARNING API call #' in lines[3] and '→ 429' in lines[3]
+
+    def test_new_line_format(self, app: Flask) -> None:
+        logs.setup_file_logging()
+        path = Path(logs.log_file_path('litkeeper.log'))
+        path.write_text('')
+        logs.log_action('Hello')
+        assert re_line.match(path.read_text().splitlines()[0])
 
     def test_entries_group_lines_and_mark_levels(self, app: Flask, client: FlaskClient) -> None:
         path = Path(logs.log_file_path('litkeeper.log'))
@@ -155,12 +169,16 @@ class TestApiDataAndViewer:
             '2026-11-20 10:00:02 - litkeeper.error - An old line without a level',
             '2026-11-20 10:00:03 - WARNING - litkeeper.action - Careful',
             '2026-11-20 10:00:04 - INFO - litkeeper.api - API data #3 sent: {"a": 1}',
+            '2026-11-20 10:00:05 WARNING New style line',
+            'continued',
+            '2026-11-20 10:00:06 INFO API data #4 sent: {"b": 2}',
         ]) + '\n')
         data = client.get('/settings/logs/litkeeper.log/entries').get_json()
         entries = data['entries']
-        assert [e['level'] for e in entries] == ['INFO', 'ERROR', 'ERROR', 'WARNING', 'INFO']
+        assert [e['level'] for e in entries] == ['INFO', 'ERROR', 'ERROR', 'WARNING', 'INFO', 'WARNING', 'INFO']
+        assert entries[5]['text'].endswith('continued')
         assert entries[1]['text'].endswith('line 1') and 'Traceback' in entries[1]['text']
-        assert [e['api_data'] for e in entries] == [False, False, False, False, True]
+        assert [e['api_data'] for e in entries] == [False, False, False, False, True, False, True]
         assert data['files'][0]['name'] == 'litkeeper.log'
 
     def test_kept_files_listed_viewable_downloadable(self, app: Flask, client: FlaskClient) -> None:

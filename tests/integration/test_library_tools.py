@@ -1,5 +1,6 @@
-"""Picking several stories in the library, the separate API log, the header theme button and square covers."""
+"""Picking several stories in the library, the one combined log, the header theme button and square covers."""
 from __future__ import annotations
+import re
 import io
 import logging
 import uuid
@@ -142,23 +143,40 @@ class TestLogging:
 
     def _read(self, name: str) -> str:
         from app.services.logger import log_file_path
-        for handler in logging.getLogger('litkeeper.api').handlers + logging.getLogger('litkeeper.request').handlers:
+        for handler in logging.getLogger('litkeeper.api').handlers + logging.getLogger('litkeeper.request').handlers + logging.getLogger('litkeeper.error').handlers:
             handler.flush()
         path = Path(log_file_path(name))
         return path.read_text() if path.exists() else ''
 
-    def test_api_calls_go_to_their_own_file(self, client: FlaskClient) -> None:
+    def test_one_log_with_changes_failures_and_slow_pages_only(self, client: FlaskClient) -> None:
+        """As in RedKeeper: page loads and the browser's checks are left out; changes are logged."""
         client.get('/api/does-not-exist-for-log-test')
         client.get('/settings/')
-        api_log, main_log = self._read('api.log'), self._read('litkeeper.log')
-        assert 'GET /api/does-not-exist-for-log-test 404' in api_log
-        assert '/api/does-not-exist-for-log-test' not in main_log
-        assert 'GET /settings/ 200' in main_log
-        assert 'GET /settings/' not in api_log
+        client.get('/queue/partials/stats')
+        client.post('/api/story/99999998/queue', json={'in_queue': True})
+        log = self._read('litkeeper.log')
+        assert '/api/does-not-exist-for-log-test' not in log and 'GET /settings/' not in log
+        assert '/queue/partials/' not in log
+        assert re.search(r'INFO #\d+ POST /api/story/99999998/queue → 404 in', log)
+        assert not Path(self._log_path('api.log')).exists() or 'POST' not in self._read('api.log')
+
+    def test_failed_and_slow_requests_are_logged(self, app: Flask) -> None:
+        from app.services.logger import log_request
+        log_request('GET', '/library/', 500, 12, None)
+        log_request('GET', '/library/', 200, 2500, None)
+        log_request('POST', '/epub/api/progress/3', 200, 5, None)
+        log = self._read('litkeeper.log')
+        assert 'ERROR GET /library/ → 500 in 12 ms' in log
+        assert 'WARNING Slow request: GET /library/ → 200 in 2500 ms' in log
+        assert '/epub/api/progress/' not in log  # Reading-position saves would drown everything else.
+
+    def _log_path(self, name: str) -> str:
+        from app.services.logger import log_file_path
+        return log_file_path(name)
 
     def test_api_log_stays_off_the_console(self, client: FlaskClient, capsys) -> None:
-        client.get('/api/does-not-exist-for-console-test')
-        assert 'does-not-exist-for-console-test' not in capsys.readouterr().out
+        client.post('/api/story/99999997/queue', json={'in_queue': True, 'note': 'data-for-console-test'})
+        assert 'data-for-console-test' not in capsys.readouterr().out
 
     def test_outgoing_openrouter_calls_are_logged_without_the_key(self, app: Flask) -> None:
         from app.services import ai_cover
@@ -171,36 +189,40 @@ class TestLogging:
 
         with patch('urllib.request.urlopen', return_value=Reply()):
             ai_cover._get('key', 'sk-or-v1-secret-for-log-test')
-        api_log = self._read('api.log')
-        assert '-> OpenRouter GET key 200' in api_log
-        assert 'secret-for-log-test' not in api_log
+        log = self._read('litkeeper.log')
+        assert 'OpenRouter GET key → 200 in' in log
+        assert 'secret-for-log-test' not in log
+
+    def test_errors_are_one_line_with_the_page(self, app: Flask) -> None:
+        from app.services.logger import log_error
+        log_error('Network error while downloading chapter 1: HTTP 403', 'https://www.literotica.com/s/x')
+        log = self._read('litkeeper.log')
+        assert log.rstrip().endswith('ERROR Network error while downloading chapter 1: HTTP 403 (https://www.literotica.com/s/x)')
+        assert '-----' not in log and 'URL:' not in log
 
     def test_download_log_files(self, client: FlaskClient) -> None:
-        client.get('/api/does-not-exist-for-download-test')
-        response = client.get('/settings/logs/api.log')
+        client.post('/api/story/99999996/queue', json={'in_queue': True})
+        response = client.get('/settings/logs/litkeeper.log')
         assert response.status_code == 200
-        assert b'does-not-exist-for-download-test' in response.data
-        assert client.get('/settings/logs/litkeeper.log').status_code == 200
+        assert b'/api/story/99999996/queue' in response.data
 
     def test_view_last_lines(self, client: FlaskClient) -> None:
-        from app.services.logger import log_file_path
-        Path(log_file_path('api.log')).write_text(''.join(f'line {n}\n' for n in range(1, 1201)))
-        data = client.get('/settings/logs/api.log/tail').get_json()
+        Path(self._log_path('litkeeper.log')).write_text(''.join(f'line {n}\n' for n in range(1, 1201)))
+        data = client.get('/settings/logs/litkeeper.log/tail').get_json()
         assert data['count'] == 500
         assert data['lines'][0] == 'line 701' and data['lines'][-1] == 'line 1200'
-        assert client.get('/settings/logs/api.log/tail?lines=3').get_json()['lines'] == ['line 1198', 'line 1199', 'line 1200']
+        assert client.get('/settings/logs/litkeeper.log/tail?lines=3').get_json()['lines'] == ['line 1198', 'line 1199', 'line 1200']
 
     def test_view_fills_from_previous_days(self, client: FlaskClient) -> None:
-        from app.services.logger import log_file_path
-        path = Path(log_file_path('api.log'))
-        (path.parent / 'api.2026-11-17.log').write_text(''.join(f'day17 {n}\n' for n in range(1, 4)))
-        (path.parent / 'api.2026-11-18.log').write_text('day18 1\nday18 2\n')
+        path = Path(self._log_path('litkeeper.log'))
+        (path.parent / 'litkeeper.2026-11-17.log').write_text(''.join(f'day17 {n}\n' for n in range(1, 4)))
+        (path.parent / 'litkeeper.2026-11-18.log').write_text('day18 1\nday18 2\n')
         path.write_text('today 1\n')
         try:
-            lines = client.get('/settings/logs/api.log/tail?lines=5').get_json()['lines']
+            lines = client.get('/settings/logs/litkeeper.log/tail?lines=5').get_json()['lines']
             assert lines == ['day17 2', 'day17 3', 'day18 1', 'day18 2', 'today 1']
         finally:
-            for name in ('api.2026-11-17.log', 'api.2026-11-18.log'):
+            for name in ('litkeeper.2026-11-17.log', 'litkeeper.2026-11-18.log'):
                 (path.parent / name).unlink(missing_ok=True)
 
     def test_old_size_based_files_are_cleared(self, app: Flask) -> None:
@@ -212,8 +234,9 @@ class TestLogging:
 
     def test_view_empty_and_unknown_logs(self, client: FlaskClient) -> None:
         from app.services.logger import log_file_path
-        Path(log_file_path('api.log')).unlink(missing_ok=True)
-        assert client.get('/settings/logs/api.log/tail?lines=abc').get_json()['count'] == 0
+        Path(log_file_path('litkeeper.log')).unlink(missing_ok=True)
+        assert client.get('/settings/logs/litkeeper.log/tail?lines=abc').get_json()['count'] == 0
+        assert client.get('/settings/logs/api.log/tail').status_code == 404  # No longer written.
         assert client.get('/settings/logs/secret.key/tail').status_code == 404
 
     @pytest.mark.parametrize('name', ['secret.key', '..%2Flitkeeper.db', 'bulk_generation.log'])
@@ -225,7 +248,7 @@ class TestLogging:
         assert b'id="logsSection"' in page
         assert b'id="logLines"' in page
         assert b'id="logRetentionDays"' in page
-        assert b'API log (today)' in page
+        assert b'Today (current)' in page and b'API log (today)' not in page
         assert b'data-theme-option' not in page
 
 

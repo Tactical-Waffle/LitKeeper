@@ -8,17 +8,18 @@ import sys
 from datetime import date, timedelta
 from typing import Optional
 
-# Log files live in the data folder (data/logs), so they survive container updates.
+# One log, data/logs/litkeeper.log, in the data folder so it survives container updates (as in RedKeeper).
+# Earlier builds also wrote api.log; its kept files can still be read until the retention period clears them.
 MAIN_LOG = 'litkeeper.log'
 API_LOG = 'api.log'
-LOG_FILES = (MAIN_LOG, API_LOG)
+LOG_FILES = (MAIN_LOG,)
 DEFAULT_LOG_RETENTION_DAYS = 30
 MAX_LOG_RETENTION_DAYS = 3650
 DEFAULT_LOG_MAX_MB = 10
 MAX_LOG_MAX_MB = 1000
 LOG_SETTINGS_KEY = 'log_settings'
 LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
-_FORMAT = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+_FORMAT = logging.Formatter('%(asctime)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 # A finished day's file: litkeeper.2026-11-19.log, or litkeeper.2026-11-19.1.log after the size limit.
 _DATED = re.compile(r'^(litkeeper|api)\.(\d{4}-\d\d-\d\d)(?:\.(\d+))?\.log$')
 # Files from earlier builds: litkeeper.log.2026-11-19 (renamed to the pattern above at startup).
@@ -42,8 +43,8 @@ error_logger = _setup_console_logger('litkeeper.error', logging.ERROR)
 url_logger = _setup_console_logger('litkeeper.url')
 request_logger = _setup_console_logger('litkeeper.request')
 
-# API calls go only to api.log, never to the console, so `docker logs` isn't flooded
-# by the browser's constant polling.
+# The data sent with API calls goes on its own "API data" line in the log (Settings → Logs can show or hide
+# it), never to the console.
 api_logger = logging.getLogger('litkeeper.api')
 api_logger.setLevel(logging.INFO)
 api_logger.propagate = False
@@ -190,9 +191,9 @@ def _rename_old_style_files(folder: str) -> None:
 
 
 def setup_file_logging(max_mb: Optional[int] = None, retention_days: Optional[int] = None) -> None:
-    """Write the main log to data/logs/litkeeper.log and API calls to data/logs/api.log. Each starts a
-    new file every day or at the size limit, and old files are kept for the retention period. Safe to
-    call more than once; without values it uses Settings → Logs (when the database is reachable)."""
+    """Write everything to data/logs/litkeeper.log. A new file starts every day or at the size limit, and
+    old files are kept for the retention period. Safe to call more than once; without values it uses
+    Settings → Logs (when the database is reachable)."""
     folder = os.path.dirname(log_file_path(MAIN_LOG))
     try:
         os.makedirs(folder, exist_ok=True)
@@ -203,17 +204,16 @@ def setup_file_logging(max_mb: Optional[int] = None, retention_days: Optional[in
     settings = log_settings()
     max_mb = max_mb or settings['max_mb']
     retention_days = retention_days or settings['retention_days']
-    targets = {MAIN_LOG: (action_logger, error_logger, url_logger, request_logger), API_LOG: (api_logger,)}
-    for name, loggers in targets.items():
-        for logger in loggers:
-            for old in [h for h in logger.handlers if getattr(h, '_litkeeper_file', False)]:
-                logger.removeHandler(old)
-                old.close()
-        handler = DailyFileHandler(log_file_path(name), max_mb * 1024 * 1024, retention_days)
-        handler.setFormatter(_FORMAT)
-        handler._litkeeper_file = True  # marks handlers this module added, so setup can be repeated
-        for logger in loggers:
-            logger.addHandler(handler)
+    loggers = (action_logger, error_logger, url_logger, request_logger, api_logger)
+    for logger in loggers:
+        for old in [h for h in logger.handlers if getattr(h, '_litkeeper_file', False)]:
+            logger.removeHandler(old)
+            old.close()
+    handler = DailyFileHandler(log_file_path(MAIN_LOG), max_mb * 1024 * 1024, retention_days)
+    handler.setFormatter(_FORMAT)
+    handler._litkeeper_file = True  # marks handlers this module added, so setup can be repeated
+    for logger in loggers:
+        logger.addHandler(handler)
 
 
 def apply_log_settings(max_mb: int, retention_days: int) -> None:
@@ -271,13 +271,12 @@ def log_files() -> list[dict]:
         if bytes_ >= 1024 * 1024:
             return f'{bytes_ / (1024 * 1024):.1f} MB'
         return f'{bytes_ / 1024:.0f} KB' if bytes_ >= 1024 else ('empty' if not bytes_ else f'{bytes_} B')
-    files = [{'name': MAIN_LOG, 'label': 'Main log (today)', 'size': size(log_file_path(MAIN_LOG))},
-             {'name': API_LOG, 'label': 'API log (today)', 'size': size(log_file_path(API_LOG))}]
+    files = [{'name': MAIN_LOG, 'label': 'Today (current)', 'size': size(log_file_path(MAIN_LOG))}]
     kept = older_log_files(MAIN_LOG) + older_log_files(API_LOG)
     for path in sorted(kept, key=lambda p: _dated_key(os.path.basename(p)), reverse=True):
         name = os.path.basename(path)
         match = _DATED.match(name)
-        label = f"{'Main' if match.group(1) == 'litkeeper' else 'API'} log, {match.group(2)}" + \
+        label = (match.group(2) if match.group(1) == 'litkeeper' else f'API log, {match.group(2)}') + \
                 (f' (part {int(match.group(3)) + 1})' if match.group(3) else '')
         files.append({'name': name, 'label': label, 'size': size(path)})
     return files
@@ -296,7 +295,9 @@ def tail_log(name: str, count: int = 500) -> list[str]:
     return lines
 
 
-_ENTRY_START = re.compile(r'^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d - (?:(%s) - )?(\S+) - ' % '|'.join(LEVELS))
+# "2026-11-20 15:22:37 ERROR message"; files from earlier builds: "2026-11-20 15:22:37 - ERROR - litkeeper.error - message".
+_ENTRY_START = re.compile(r'^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d (?:(%s) |- (?:(%s) - )?(\S+) - )'
+                          % ('|'.join(LEVELS), '|'.join(LEVELS)))
 
 
 def log_entries(name: str, count: int = 3000) -> list[dict]:
@@ -306,8 +307,8 @@ def log_entries(name: str, count: int = 3000) -> list[dict]:
     for line in tail_log(name, count * 2):
         start = _ENTRY_START.match(line)
         if start or not result:
-            level = (start.group(1) if start else None) or \
-                    ('ERROR' if start and start.group(2) == 'litkeeper.error' else 'INFO')
+            level = (start.group(1) or start.group(2) if start else None) or \
+                    ('ERROR' if start and start.group(3) == 'litkeeper.error' else 'INFO')
             message = line[start.end():] if start else line
             result.append({'text': line, 'level': level, 'api_data': message.startswith('API data #')})
         else:
@@ -354,35 +355,51 @@ def is_api_path(path: str) -> bool:
     return path.startswith(('/api/', '/epub/api/', '/queue/api/', '/queue/partials/', '/opds'))
 
 
+SLOW_REQUEST_MS = 2000
+
+
+def _quiet_request(path: str, status: int) -> bool:
+    """Requests never logged: static files, the log viewer's own checks and reading-position saves."""
+    if path.startswith(('/static/', '/health')) or path == '/favicon.ico':
+        return True
+    if status < 400 and path.startswith('/settings/logs/') and path.endswith(('/entries', '/tail')):
+        return True
+    return status < 400 and path.startswith('/epub/api/progress/')
+
+
 def log_request(method: str, path: str, status: int, duration_ms: float, client: Optional[str], data=None) -> None:
-    """One line per request: API calls to api.log, page loads to the main log. Static files are skipped.
-    JSON sent to an API path goes on its own "API data" line after the request line."""
-    if path.startswith('/static/') or path == '/favicon.ico':
+    """As in RedKeeper: every change (POST, PUT, DELETE…), failed requests and slow pages, with how long they
+    took. Ordinary page loads and the browser's every-few-seconds checks are left out. JSON sent with a change
+    goes on its own "API data" line, which Settings → Logs can hide."""
+    if _quiet_request(path, status):
         return
-    if path.startswith('/settings/logs/') and path.endswith('/entries') and status == 200:
-        return  # The log viewer checks every 3 seconds; logging that would fill the log it is showing.
-    line = f"{method} {path} {status} {duration_ms:.0f} ms {client or '-'}"
-    if is_api_path(path):
-        if data is not None:
+    changed = method not in ('GET', 'HEAD', 'OPTIONS')
+    line = f"{method} {path} → {status} in {duration_ms:.0f} ms"
+    if status >= 500:
+        request_logger.error(line)
+    elif duration_ms > SLOW_REQUEST_MS:
+        request_logger.warning(f"Slow request: {line}")
+    elif changed:
+        if data is not None and is_api_path(path):
             number = next_api_number()
-            api_logger.info(f"#{number} {line}")
+            request_logger.info(f"#{number} {line}")
             log_api_data(number, data)
         else:
-            api_logger.info(line)
-    else:
-        request_logger.info(line)
+            request_logger.info(line)
 
 
 def log_api_call(service: str, method: str, endpoint: str, status: object, duration_ms: float,
                  number: Optional[int] = None) -> None:
     """The result of an outgoing call LitKeeper makes to another service's API (e.g. OpenRouter). Never include keys."""
-    api_logger.info(f"-> {f'#{number} ' if number else ''}{service} {method} {endpoint} {status} {duration_ms:.0f} ms")
+    ok = str(status).startswith('2')
+    (action_logger.info if ok else action_logger.warning)(
+        f"API call {f'#{number}: ' if number else ''}{service} {method} {endpoint} → {status} in {duration_ms / 1000:.1f} s")
 
 
 def log_api_call_started(service: str, method: str, endpoint: str, data=None) -> int:
     """An outgoing call is starting: one line, plus its data on an "API data" line. Returns the call's number."""
     number = next_api_number()
-    api_logger.info(f"-> #{number} {service} {method} {endpoint} started")
+    action_logger.info(f"API call #{number} started: {service} {method} {endpoint}")
     if data is not None:
         log_api_data(number, data)
     return number
@@ -408,15 +425,15 @@ def log_action(message: str) -> None:
         action_logger.info(message)
 
 def log_error(error_message: str, url: Optional[str] = None) -> None:
-    """Log an error message using rotating file handler."""
+    """An error, on one line with the page it concerns in brackets (any traceback follows on its own lines)."""
     if error_logger:
-        message = error_message
-        if url and url not in error_message:
-            message += f"\nURL: {url}"
-        message += "\n" + "-"*50
+        message = error_message.rstrip()
+        if url and url not in message:
+            first, _, rest = message.partition('\n')
+            message = f"{first} ({url})" + (f"\n{rest}" if rest else '')
         error_logger.error(message)
 
 def log_url(url: str) -> None:
-    """Log URL using rotating file handler."""
+    """The page being downloaded."""
     if url_logger:
-        url_logger.info(url)
+        url_logger.info(f"Source: {url}")

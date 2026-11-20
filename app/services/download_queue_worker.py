@@ -388,7 +388,7 @@ class DownloadQueueWorker:
                 log_error(f"Failed to process download queue item {item_id}: Item no longer exists")
                 return
 
-            log_error(f"Failed to process download queue item {item_id}: {error_msg}\n{traceback.format_exc()}")
+            log_error(f"Download queue item {item_id} failed: {error_msg}", item.url)
 
             item.retry_count += 1
             attempts = max(item.max_retries or 0, MAX_ATTEMPTS)

@@ -6,7 +6,7 @@ errors = Blueprint('errors', __name__)
 
 @errors.app_errorhandler(404)
 def not_found_error(error):
-    log_error(f"404 Error: {error}")
+    # Not logged: a missing page is not an error in LitKeeper (a changing request that gets 404 is logged with it).
     return render_template('errors/404.html'), 404
 
 @errors.app_errorhandler(500)

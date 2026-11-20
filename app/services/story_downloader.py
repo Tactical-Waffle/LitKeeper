@@ -12,6 +12,15 @@ from .http_client import get_session
 # Format: \x1eCHAPTER:{n}\x1e{bare_title}\n\n{content}
 CHAPTER_SENTINEL = '\x1e'
 
+
+def _explain(error: Exception) -> str:
+    """An HTTP error as written to the log; a 403 is Literotica (or Cloudflare in front of it) refusing the request."""
+    if getattr(error, 'code', None) == 403:
+        return 'HTTP 403 (Literotica refused the request; usually a Cloudflare check or too many requests)'
+    if getattr(error, 'code', None):
+        return f'HTTP {error.code}'
+    return str(error)
+
 def split_story_chapters(content: str) -> list[str]:
     """Split composite story content into [preamble, ch1, ch2, ...].
 
@@ -90,7 +99,7 @@ def extract_series_url_from_chapter(chapter_url: str, session: requests.Session)
         return None
 
     except Exception as e:
-        log_error(f"Error extracting series URL from chapter: {str(e)}", chapter_url)
+        log_error(f"Error extracting series URL from chapter: {_explain(e)}", chapter_url)
         return None
 
 def _parse_stat_value(raw_text: str) -> Optional[float]:
@@ -559,7 +568,7 @@ def download_story(url: str, only_this_part: bool = False) -> tuple[Optional[str
                         break
 
                 except Exception as e:
-                    error_msg = f"Network error while downloading chapter {current_chapter}: {str(e)}"
+                    error_msg = f"Network error while downloading chapter {current_chapter}: {_explain(e)}"
                     log_error(error_msg, current_url)
                     return None, None, None, None, None, None, None, None, None, None
                 except Exception as e:

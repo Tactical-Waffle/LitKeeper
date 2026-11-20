@@ -73,7 +73,8 @@ def migrate_covers_to_id_prefix() -> dict:
         f"Cover migration complete: {renamed} renamed, {skipped} already migrated / missing, "
         f"{failed} failed."
     )
-    log_action(f"[migrate-covers] {summary}")
+    if renamed or failed:  # Runs every 5 minutes; nothing to say once every cover has been renamed.
+        log_action(f"[migrate-covers] {summary}")
     return {
         'success': True,
         'message': summary,

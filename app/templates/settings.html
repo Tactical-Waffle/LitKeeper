@@ -678,10 +678,11 @@
         Logs
       </h3>
       <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-        LitKeeper keeps two logs in the <code class="text-xs">logs</code> folder inside your data folder. The main log has
-        downloads, errors and page loads. The API log has every API call, with the JSON sent on its own line.
-        Each log starts a new file every day, or sooner when it reaches the size below. Old files are kept, uncompressed,
-        for the number of days below.
+        LitKeeper keeps one log in the <code class="text-xs">logs</code> folder inside your data folder: downloads,
+        errors, changes you make, failed or slow requests, and calls to outside services such as OpenRouter, with the
+        data sent on its own line (hidden unless Show API data is ticked). Routine checks are only logged when they
+        find something to do. A new file starts every day, or sooner when it reaches the size below. Old files are
+        kept, uncompressed, for the number of days below.
       </p>
       <div class="flex flex-wrap items-end gap-3 mb-5">
         <label class="text-sm text-gray-700 dark:text-gray-300">
@@ -744,7 +745,7 @@
   var currentLogName = 'litkeeper.log';
   var logEntries = [];
   var logTimer = null;
-  var LOG_TODAY = ['litkeeper.log', 'api.log'];
+  var LOG_TODAY = ['litkeeper.log'];
 
   function logPrefs(save) {
     const ids = { level: 'logLevel', search: 'logSearch', api: 'logShowApi', follow: 'logFollow' };

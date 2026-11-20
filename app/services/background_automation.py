@@ -157,7 +157,8 @@ class BackgroundAutomation:
             if epub_queued or json_queued:
                 db.session.commit()
 
-            log_action(f"[AUTOMATION] Format heal: {paths_fixed} path(s) repaired, {epub_queued} EPUB + {json_queued} JSON job(s) queued.")
+            if paths_fixed or epub_queued or json_queued:  # Every 5 minutes: only worth a line when something was done.
+                log_action(f"[AUTOMATION] Format heal: {paths_fixed} path(s) repaired, {epub_queued} EPUB + {json_queued} JSON job(s) queued.")
 
         except Exception as e:
             db.session.rollback()
@@ -228,7 +229,8 @@ class BackgroundAutomation:
             orphaned_count = sync_status['orphaned_files_count']
             duplicate_count = sync_status.get('duplicate_files_count', 0)
 
-            log_action(f"[AUTOMATION] Sync status: {orphaned_count} orphaned files, {duplicate_count} duplicates")
+            if orphaned_count or duplicate_count:
+                log_action(f"[AUTOMATION] Sync status: {orphaned_count} orphaned files, {duplicate_count} duplicates")
 
             if orphaned_count > 0:
                 log_action(f"[AUTOMATION] Found {orphaned_count} new stories in filesystem, adding to library...")
@@ -239,8 +241,6 @@ class BackgroundAutomation:
                     log_action(f"[AUTOMATION] Successfully added {added_count} stories to library")
                 else:
                     log_action(f"[AUTOMATION] No new stories added (duplicates or errors)")
-            else:
-                log_action("[AUTOMATION] No orphaned files to add")
 
             if duplicate_count > 0:
                 removed = sync_checker.cleanup_confirmed_duplicates()
@@ -267,10 +267,6 @@ class BackgroundAutomation:
             ).count()
             
             if not stories_missing_metadata:
-                if excluded_stories > 0:
-                    log_action(f"[AUTOMATION] No stories to check ({excluded_stories} excluded from auto-refresh)")
-                else:
-                    log_action("[AUTOMATION] No stories missing metadata")
                 return
             
             log_action(f"[AUTOMATION] Found {len(stories_missing_metadata)} stories missing metadata, checking for auto-matches...")
