@@ -305,7 +305,9 @@ def read_story(story_id: int) -> ResponseReturnValue:
         target_para = request.args.get('para', type=int)
         epub_fmt = StoryFormat.query.filter_by(story_id=story_db.id, format_type='epub').first()
         epub_filename = os.path.basename(epub_fmt.file_path) if epub_fmt else None
+        from app.services.reading_settings import auto_mark_read
         return render_template('reader.html', story=story_data, story_id=story_db.id, progress=progress,
+                               is_read=bool(progress and progress.is_completed), auto_mark_read=auto_mark_read(),
                                target_chapter=target_chapter, target_para=target_para,
                                epub_filename=epub_filename,
                                literotica_page_count=story_db.literotica_page_count,

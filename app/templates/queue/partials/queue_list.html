@@ -1,5 +1,12 @@
 <div class="-mx-4 divide-y divide-slate-100 dark:divide-slate-700/50">
 
+  {% if next_download_in %}
+  <p id="nextDownloadNote" class="px-4 py-2.5 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60">
+    Next download in about {{ next_download_in }} minute{{ 's' if next_download_in != 1 else '' }}.
+    LitKeeper waits between downloads (Settings &rarr; Downloads).
+  </p>
+  {% endif %}
+
   {% for item in items %}
   <div class="flex items-start gap-3 px-4 py-4">
 
@@ -83,6 +90,10 @@
       <div class="mt-2 p-2.5 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/40">
         <p class="text-xs text-red-700 dark:text-red-400">{{ item.error_message }}</p>
       </div>
+      {% elif item.status == 'pending' and item.retry_in and item.error_message %}
+      <div class="mt-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900/40">
+        <p class="text-xs text-amber-800 dark:text-amber-300">{{ item.error_message }}</p>
+      </div>
       {% elif item.status == 'rate_limited' %}
       <div class="mt-2 p-2.5 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-900/40">
         <p class="text-xs text-orange-700 dark:text-orange-400">Daily download limit reached. This item will resume automatically tomorrow.</p>
@@ -96,6 +107,9 @@
           Failed after {{ item.retry_count }} attempt{{ 's' if item.retry_count != 1 else '' }}
         {% elif item.status == 'rate_limited' %}
           <span class="text-orange-600 dark:text-orange-400 font-medium">Paused — daily limit</span>
+          · Added {{ item.created_at|humanize_date if item.created_at else 'recently' }}
+        {% elif item.status == 'pending' and item.retry_in %}
+          <span class="text-amber-700 dark:text-amber-400 font-medium">Trying again in about {{ item.retry_in }} minute{{ 's' if item.retry_in != 1 else '' }}</span>
           · Added {{ item.created_at|humanize_date if item.created_at else 'recently' }}
         {% elif item.status == 'pending' %}
           Added {{ item.created_at|humanize_date if item.created_at else 'recently' }}

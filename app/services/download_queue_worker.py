@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import random
 import threading
 import time
 import traceback
@@ -11,6 +12,20 @@ from app.services.http_client import global_rate_limiter
 DEFAULT_MAX_DAILY_DOWNLOADS = 25
 MAX_DAILY_DOWNLOADS_LIMIT = 10000
 DAILY_CAP_KEY = 'max_daily_downloads'
+
+# Pacing: a wait of about this many minutes after each story fetched from Literotica, varied by up to
+# DELAY_VARIATION either way so downloads don't arrive like clockwork.
+DOWNLOAD_DELAY_KEY = 'download_delay_minutes'
+DEFAULT_DOWNLOAD_DELAY_MINUTES = 10
+MAX_DOWNLOAD_DELAY_MINUTES = 720
+DELAY_VARIATION = 0.25
+NEXT_DOWNLOAD_KEY = 'next_download_at'
+
+# Failed downloads (often a Cloudflare check) are tried again later, each wait longer than the last.
+RETRY_DELAYS_MINUTES = (5, 15, 45, 120, 360)
+MAX_ATTEMPTS = len(RETRY_DELAYS_MINUTES) + 1
+# Failures in a row also stretch the wait before the next download of any story, up to this.
+FAILURE_GAP_CAP_MINUTES = 240
 
 
 def env_daily_cap() -> Optional[int]:
@@ -59,6 +74,75 @@ def save_daily_cap(value) -> int:
     return number
 
 
+def vary(minutes: float) -> float:
+    """The given number of minutes, made up to 25% shorter or longer at random."""
+    return minutes * random.uniform(1 - DELAY_VARIATION, 1 + DELAY_VARIATION)
+
+
+def get_download_delay() -> int:
+    """Minutes between downloads from Settings (0 means no wait). Needs an app context."""
+    from app.models import AppConfig
+    cfg = AppConfig.query.filter_by(key=DOWNLOAD_DELAY_KEY).first()
+    try:
+        value = int(cfg.get_value()) if cfg else DEFAULT_DOWNLOAD_DELAY_MINUTES
+    except (TypeError, ValueError):
+        return DEFAULT_DOWNLOAD_DELAY_MINUTES
+    return min(max(value, 0), MAX_DOWNLOAD_DELAY_MINUTES)
+
+
+def save_download_delay(value) -> int:
+    """Save minutes between downloads. Raises ValueError for anything but a whole number in range."""
+    from app.models import AppConfig, db
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError('Enter a whole number of minutes.')
+    if number < 0 or number > MAX_DOWNLOAD_DELAY_MINUTES:
+        raise ValueError(f'Enter a number from 0 to {MAX_DOWNLOAD_DELAY_MINUTES}.')
+    cfg = AppConfig.query.filter_by(key=DOWNLOAD_DELAY_KEY).first()
+    if not cfg:
+        cfg = AppConfig(key=DOWNLOAD_DELAY_KEY, value_type='int', description='Minutes between downloads (varied by up to 25%)')
+        db.session.add(cfg)
+    cfg.value_type = 'int'
+    cfg.set_value(number)
+    # A shorter wait takes effect now rather than after the wait already planned.
+    planned = next_download_at()
+    if planned and planned > datetime.utcnow() + timedelta(minutes=number * (1 + DELAY_VARIATION)):
+        _store_next_download_at(datetime.utcnow() + timedelta(minutes=vary(number)) if number else None, commit=False)
+    db.session.commit()
+    return number
+
+
+def next_download_at() -> Optional[datetime]:
+    """When the next story may be downloaded (UTC), or None for straight away. Kept in the
+    database so the queue page (served by any web worker) can show it and restarts respect it."""
+    from app.models import AppConfig
+    cfg = AppConfig.query.filter_by(key=NEXT_DOWNLOAD_KEY).first()
+    if not cfg or not cfg.value:
+        return None
+    try:
+        return datetime.fromisoformat(cfg.value)
+    except ValueError:
+        return None
+
+
+def _store_next_download_at(when: Optional[datetime], commit: bool = True) -> None:
+    from app.models import AppConfig, db
+    cfg = AppConfig.query.filter_by(key=NEXT_DOWNLOAD_KEY).first()
+    if not cfg:
+        cfg = AppConfig(key=NEXT_DOWNLOAD_KEY, value_type='string', description='Earliest time of the next download (UTC)')
+        db.session.add(cfg)
+    cfg.value = when.isoformat() if when else None
+    if commit:
+        db.session.commit()
+
+
+def retry_wait(failures: int) -> timedelta:
+    """How long to wait before trying a story again after this many failed attempts."""
+    minutes = RETRY_DELAYS_MINUTES[min(max(failures, 1), len(RETRY_DELAYS_MINUTES)) - 1]
+    return timedelta(minutes=vary(minutes))
+
+
 class DownloadQueueWorker:
     """Background worker for processing download queue"""
 
@@ -70,6 +154,7 @@ class DownloadQueueWorker:
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
         self._last_rate_limit_reset_date: Optional[str] = None
+        self._failures_in_a_row = 0
 
     def start(self):
         """Start the background worker thread"""
@@ -133,10 +218,39 @@ class DownloadQueueWorker:
             except Exception as e:
                 log_error(f"Error in download queue worker: {str(e)}\n{traceback.format_exc()}")
 
-            self._wake_event.wait(self.poll_interval)
+            self._wake_event.wait(self._seconds_until_next_check())
             self._wake_event.clear()
 
         log_action("Download queue worker stopped")
+
+    def _seconds_until_next_check(self) -> float:
+        """Sleep until the planned next download when that comes before the usual poll."""
+        try:
+            with self.app.app_context():
+                planned = next_download_at()
+        except Exception:
+            return self.poll_interval
+        if not planned:
+            return self.poll_interval
+        remaining = (planned - datetime.utcnow()).total_seconds()
+        return min(self.poll_interval, max(remaining + 1, 1))
+
+    def _plan_next_download(self, failed: bool) -> None:
+        """After a visit to Literotica: wait about the set number of minutes before the next one,
+        doubling with each failure in a row (a Cloudflare check tends to last a while)."""
+        from .logger import log_action
+        self._failures_in_a_row = self._failures_in_a_row + 1 if failed else 0
+        minutes = get_download_delay()
+        if self._failures_in_a_row:
+            minutes = min(max(minutes, RETRY_DELAYS_MINUTES[0]) * 2 ** self._failures_in_a_row, FAILURE_GAP_CAP_MINUTES)
+        if not minutes:
+            _store_next_download_at(None)
+            return
+        minutes = vary(minutes)
+        when = datetime.utcnow() + timedelta(minutes=minutes)
+        _store_next_download_at(when)
+        log_action(f"[DOWNLOAD WORKER] Next download in {minutes:.1f} minutes"
+                   + (f" ({self._failures_in_a_row} failed in a row)" if self._failures_in_a_row else ''))
 
     def _get_daily_cap(self) -> int:
         return get_daily_cap()
@@ -196,6 +310,9 @@ class DownloadQueueWorker:
         self._reset_rate_limited_items()
 
         now = datetime.utcnow()
+        planned = next_download_at()
+        if planned and planned > now:
+            return
         item = db.session.execute(
             select(DownloadQueueItem)
             .filter(
@@ -252,6 +369,8 @@ class DownloadQueueWorker:
             db.session.commit()
 
             log_action(f"Successfully completed download queue item {item.id}")
+            if downloaded:  # A story skipped as already saved never reached Literotica: no need to wait.
+                self._plan_next_download(failed=False)
 
             if item.job_type != 'author' and downloaded:
                 from .notifier import send_notification
@@ -272,18 +391,26 @@ class DownloadQueueWorker:
             log_error(f"Failed to process download queue item {item_id}: {error_msg}\n{traceback.format_exc()}")
 
             item.retry_count += 1
+            attempts = max(item.max_retries or 0, MAX_ATTEMPTS)
 
-            if item.retry_count >= item.max_retries:
+            if item.retry_count >= attempts:
                 item.status = 'failed'
+                item.scheduled_after = None
                 item.error_message = f"Failed after {item.retry_count} attempts: {error_msg}"
                 item.completed_at = datetime.utcnow()
-                log_action(f"Download queue item {item_id} failed permanently after {item.retry_count} retries")
+                log_action(f"Download queue item {item_id} failed permanently after {item.retry_count} attempts")
             else:
+                wait = retry_wait(item.retry_count)
                 item.status = 'pending'
-                item.error_message = f"Attempt {item.retry_count} failed: {error_msg}"
-                log_action(f"Download queue item {item_id} will be retried (attempt {item.retry_count + 1}/{item.max_retries})")
+                item.started_at = None
+                item.scheduled_after = datetime.utcnow() + wait
+                item.error_message = f"Attempt {item.retry_count} of {attempts} failed: {error_msg}"
+                item.progress_message = f"Trying again in about {round(wait.total_seconds() / 60)} minutes"
+                log_action(f"Download queue item {item_id} will be tried again in {wait.total_seconds() / 60:.0f} minutes "
+                           f"(attempt {item.retry_count + 1}/{attempts})")
 
             db.session.commit()
+            self._plan_next_download(failed=True)
 
     def _download_and_save(self, item):
         """Download a single story URL and save to database.

@@ -299,7 +299,7 @@ body {
 .story-container {
   max-width: var(--max-width);
   margin: 0 auto;
-  padding-top: 5rem;
+  padding-top: 4rem;
   padding-bottom: 2rem;
   padding-left: 1rem;
   padding-right: 1rem;
@@ -744,3 +744,20 @@ a:hover {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* A short line under the top bar in place of the old title box. */
+.story-byline {
+  margin: 0 0 1.25rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.9rem;
+  color: var(--secondary-text);
+  text-align: center;
+}
+.story-byline .multiple-authors-note { display: inline; margin: 0 0 0 0.25rem; font-size: inherit; }
+.byline-sep { margin: 0 0.35rem; }
+.story-byline + .story-content,
+.story-byline + .table-of-contents + .story-content { margin-top: 0; }
+.story-byline + .table-of-contents { margin-bottom: 1.5rem; }
+
+/* Mark as Read: highlighted once the story is read. */
+#mark-read-btn[data-read="true"] { color: var(--link-color); border-color: var(--link-color); }

@@ -35,7 +35,7 @@ class DownloadQueueItem(BaseModel, TimestampMixin):
     completed_at = db.Column(db.DateTime)
 
     retry_count = db.Column(db.Integer, default=0)
-    max_retries = db.Column(db.Integer, default=3)
+    max_retries = db.Column(db.Integer, default=6)
 
     def __repr__(self):
         return f'<DownloadQueueItem {self.id} {self.url} {self.status} {self.job_type}>'

@@ -19,6 +19,32 @@ def _visible_items_query():
     )
 
 
+def _minutes_until(when) -> int | None:
+    from datetime import datetime
+    if not when:
+        return None
+    if isinstance(when, str):
+        try:
+            when = datetime.fromisoformat(when)
+        except ValueError:
+            return None
+    seconds = (when - datetime.utcnow()).total_seconds()
+    return max(1, round(seconds / 60)) if seconds > 0 else None
+
+
+def _list_values(items) -> dict:
+    """The queue list's items, each waiting retry with how long until it is tried again, and the
+    wait before the next download when stories are waiting for it."""
+    from app.services.download_queue_worker import next_download_at
+    shown = []
+    for item in items:
+        entry = item.to_dict()
+        entry['retry_in'] = _minutes_until(item.scheduled_after) if item.status == 'pending' and item.retry_count else None
+        shown.append(entry)
+    waiting = DownloadQueueItem.query.filter_by(status='pending').count()
+    return {'items': shown, 'next_download_in': _minutes_until(next_download_at()) if waiting else None}
+
+
 @queue.route('/')
 def index() -> ResponseReturnValue:
     all_items = _visible_items_query().order_by(desc(DownloadQueueItem.created_at)).limit(70).all()
@@ -30,7 +56,7 @@ def index() -> ResponseReturnValue:
                            completed=DownloadQueueItem.query.filter_by(status='completed').count(),
                            failed=DownloadQueueItem.query.filter_by(status='failed').count(),
                            rate_limited=rate_limited_count,
-                           queue_items=[i.to_dict() for i in all_items],
+                           queue_list=_list_values(all_items),
                            ai=_ai_cover_queue())
 
 @queue.route('/api/items')
@@ -101,8 +127,7 @@ def queue_list_partial() -> ResponseReturnValue:
     """HTMX partial for queue list"""
     try:
         all_items = _visible_items_query().order_by(desc(DownloadQueueItem.created_at)).limit(70).all()
-        return render_template('queue/partials/queue_list.html',
-                               items=[item.to_dict() for item in all_items])
+        return render_template('queue/partials/queue_list.html', **_list_values(all_items))
     except Exception as e:
         log_error(f"Error rendering queue list: {str(e)}")
         return '<div class="text-red-600 dark:text-red-400">Error loading queue</div>', 500

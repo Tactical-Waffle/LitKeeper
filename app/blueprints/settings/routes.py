@@ -63,6 +63,9 @@ def index() -> ResponseReturnValue:
         daily_download_limit=dq.get_daily_cap(),
         daily_download_default=dq.DEFAULT_MAX_DAILY_DOWNLOADS,
         daily_download_max=dq.MAX_DAILY_DOWNLOADS_LIMIT,
+        download_delay=dq.get_download_delay(),
+        auto_mark_read=_auto_mark_read(),
+        download_delay_max=dq.MAX_DOWNLOAD_DELAY_MINUTES,
     )
 
 
@@ -448,6 +451,47 @@ def save_story_filter() -> ResponseReturnValue:
         return jsonify({'success': False, 'message': 'Error saving the filter terms'}), 500
     log_action(f"Story filter terms saved ({len(terms)})")
     return jsonify({'success': True, 'terms': terms})
+
+
+def _auto_mark_read() -> bool:
+    from app.services.reading_settings import auto_mark_read
+    return auto_mark_read()
+
+
+@settings.route('/reading', methods=['POST'])
+def save_reading_settings() -> ResponseReturnValue:
+    from app.services.reading_settings import set_auto_mark_read
+    on = (request.get_json(silent=True) or {}).get('auto_mark_read')
+    if not isinstance(on, bool):
+        return jsonify({'success': False, 'message': 'auto_mark_read must be true or false'}), 400
+    try:
+        set_auto_mark_read(on)
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error saving the reading setting: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error saving the reading setting'}), 500
+    log_action(f"Reading: mark read at the end {'on' if on else 'off'}")
+    return jsonify({'success': True, 'auto_mark_read': on})
+
+
+@settings.route('/download-delay', methods=['POST'])
+def save_download_delay() -> ResponseReturnValue:
+    from flask import current_app
+    from app.services import download_queue_worker as dq
+    data = request.get_json(silent=True) or {}
+    try:
+        minutes = dq.save_download_delay(data.get('minutes'))
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error saving the time between downloads: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'message': 'Error saving the time between downloads'}), 500
+    log_action(f"Time between downloads set to about {minutes} minutes")
+    worker = getattr(current_app, 'download_worker', None)
+    if worker:
+        worker.wake()
+    return jsonify({'success': True, 'minutes': minutes})
 
 
 @settings.route('/daily-downloads', methods=['POST'])

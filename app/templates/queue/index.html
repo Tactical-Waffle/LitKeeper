@@ -117,7 +117,7 @@
          hx-get="/queue/partials/list"
          hx-trigger="every 2s"
          hx-swap="innerHTML">
-      {% with items=queue_items %}
+      {% with items=queue_list['items'], next_download_in=queue_list['next_download_in'] %}
         {% include 'queue/partials/queue_list.html' %}
       {% endwith %}
     </div>

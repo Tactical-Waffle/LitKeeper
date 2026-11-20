@@ -1143,6 +1143,22 @@ def set_story_rating(story_id: int) -> ResponseReturnValue:
     return jsonify({"rating": story.rating})
 
 
+@api.route("/story/<int:story_id>/read", methods=['POST'])
+def set_story_read(story_id: int) -> ResponseReturnValue:
+    """Mark a story read or unread ({"read": true|false}). Reading it takes it off the reading queue."""
+    from app.models import Story, db
+    from app.services.epub_service import EpubService
+    story = db.session.get(Story, story_id)
+    if not story:
+        return jsonify({"success": False, "message": "Story not found"}), 404
+    read = (request.get_json(silent=True) or {}).get('read', True)
+    if not isinstance(read, bool):
+        return jsonify({"success": False, "message": "read must be true or false"}), 400
+    EpubService.update_reading_progress(story_id=story.id, is_completed=read)
+    log_action(f"Marked story {story.id} ({story.title}) as {'read' if read else 'unread'}")
+    return jsonify({"success": True, "read": read, "in_queue": bool(story.in_queue)})
+
+
 @api.route("/story/<int:story_id>/queue", methods=['POST'])
 def toggle_story_queue(story_id: int) -> ResponseReturnValue:
     from app.models import Story, db

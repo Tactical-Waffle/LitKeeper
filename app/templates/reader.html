@@ -2,35 +2,14 @@
 
 {% block content %}
 <article class="story-container">
-  <header class="story-header">
-    <h1 class="story-title">{{ story.title }}</h1>
-    <p class="story-author">
-      by {% if story.author_url %}<a href="{{ story.author_url }}" target="_blank" rel="noopener noreferrer" class="author-link">{{ story.author }}</a>{% else %}{{ story.author }}{% endif %}
-      {% if story.all_authors and story.all_authors|length > 1 %}
-      <span class="multiple-authors-note">(Multiple Authors: {{ story.all_authors|join(', ') }})</span>
-      {% endif %}
-    </p>
-    {% if story.category or story.tags %}
-    <div class="story-metadata">
-      {% if story.category %}
-      <span class="category">{{ story.category }}</span>
-      {% endif %}
-      {% if story.tags %}
-      <span class="tags">Tags: {{ story.tags|join(', ') if story.tags is iterable and story.tags is not string else story.tags }}</span>
-      {% endif %}
-    </div>
-    {% endif %}
-    {% if story.description %}
-    <p class="story-description">{{ story.description }}</p>
-    {% endif %}
-    {% if story_id %}
-    <div class="story-header-rating" id="header-rating-widget">
-      {% for i in range(1, 6) %}
-      <button class="header-star" data-value="{{ i }}" aria-label="{{ i }} star{{ 's' if i != 1 else '' }}">★</button>
-      {% endfor %}
-    </div>
-    {% endif %}
-  </header>
+  {# The title is in the bar at the top, so the story starts with one short line instead of a large box. #}
+  {% if story.author or story.category %}
+  <p class="story-byline">
+    {% if story.author %}by {% if story.author_url %}<a href="{{ story.author_url }}" target="_blank" rel="noopener noreferrer" class="author-link">{{ story.author }}</a>{% else %}{{ story.author }}{% endif %}{% endif %}
+    {% if story.all_authors and story.all_authors|length > 1 %}<span class="multiple-authors-note">(with {{ story.all_authors|reject('equalto', story.author)|join(', ') }})</span>{% endif %}
+    {% if story.category %}{% if story.author %}<span class="byline-sep" aria-hidden="true">·</span> {% endif %}<span class="byline-category">{{ story.category }}</span>{% endif %}
+  </p>
+  {% endif %}
 
   {% if story.chapters|length > 1 %}
   <nav class="table-of-contents">
@@ -47,7 +26,7 @@
     {% set ns = namespace(para_idx=0) %}
     {% for chapter in story.chapters %}
     <section class="chapter" id="chapter-{{ chapter.number }}">
-      <h2 class="chapter-title">{{ chapter.title }}</h2>
+      {% if story.chapters|length > 1 %}<h2 class="chapter-title">{{ chapter.title }}</h2>{% endif %}
       <div class="chapter-content">
         {% for paragraph in chapter.paragraphs %}
         <p id="para-{{ ns.para_idx }}" data-chapter="{{ chapter.number }}" data-para="{{ loop.index0 }}">{{ paragraph | safe }}</p>
@@ -72,6 +51,12 @@
       Rate Story
     </button>
     {% endif %}
+    {% if story_id %}
+    <button id="mark-read-btn" class="story-end-btn" data-read="{{ 'true' if is_read else 'false' }}" aria-pressed="{{ 'true' if is_read else 'false' }}">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+      <span>{{ 'Read · Mark as Unread' if is_read else 'Mark as Read' }}</span>
+    </button>
+    {% endif %}
     {% if story.source_url %}
     <a href="{{ story.source_url.rstrip('/') }}/comments" target="_blank" rel="noopener noreferrer" class="story-end-btn">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
@@ -91,6 +76,33 @@
   window.TARGET_CHAPTER = {{ target_chapter }};
   window.TARGET_PARA = {{ target_para if target_para is not none else 0 }};
   {% endif %}
+  // Mark as Read at the end of the story; with Settings → Reading on, done on reaching the end.
+  (() => {
+    const button = document.getElementById('mark-read-btn');
+    if (!button) return;
+    async function setRead(read) {
+      try {
+        const response = await fetch(`/api/story/${window.STORY_ID}/read`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ read }) });
+        if (!response.ok) return;
+      } catch (_) { return; }
+      sessionStorage.setItem('litkeeper_reload', '1');  // The library shows the change on return.
+      button.dataset.read = String(read);
+      button.setAttribute('aria-pressed', String(read));
+      button.querySelector('span').textContent = read ? 'Read · Mark as Unread' : 'Mark as Read';
+    }
+    button.addEventListener('click', () => setRead(button.dataset.read !== 'true'));
+    if ({{ 'true' if auto_mark_read else 'false' }} && button.dataset.read !== 'true') {
+      const watch = () => {
+        const end = document.documentElement.scrollHeight - window.innerHeight;
+        if (end > 0 && window.scrollY >= end - 40) {
+          window.removeEventListener('scroll', watch);
+          if (button.dataset.read !== 'true') setRead(true);
+        }
+      };
+      window.addEventListener('scroll', watch, { passive: true });
+    }
+  })();
 </script>
 {% endif %}
 

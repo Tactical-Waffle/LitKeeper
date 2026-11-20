@@ -112,6 +112,21 @@
   </div>
 
   <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
+    <section id="readingSection">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
+        <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+        </svg>
+        Reading
+      </h3>
+      <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 mt-2">
+        <input type="checkbox" id="autoMarkRead" class="mt-1 rounded border-gray-300 dark:border-gray-600" {% if auto_mark_read %}checked{% endif %} onchange="saveAutoMarkRead(this)">
+        <span>Mark a story as read when I scroll to the end of it in the reader. Otherwise use <strong>Mark as Read</strong> at the end of the story.</span>
+      </label>
+    </section>
+  </div>
+
+  <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
     <section id="downloadsSection">
       <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
         <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -121,10 +136,30 @@
         Downloads
       </h3>
       <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-        The most stories LitKeeper downloads in a day. Anything beyond it waits in the queue and starts
-        again at midnight UTC. The default of {{ daily_download_default }} is kind to Literotica's servers.
+        After each story it fetches from Literotica, LitKeeper waits before starting the next. The wait changes
+        every time, up to 25% shorter or longer, so downloads don't arrive like clockwork. 0 means no wait.
       </p>
-      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="dailyDownloadLimit">Daily download limit</label>
+      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="downloadDelay">Time between downloads</label>
+      <div class="flex flex-wrap items-center gap-3">
+        <input type="number" id="downloadDelay" min="0" max="{{ download_delay_max }}" step="1" inputmode="numeric"
+          value="{{ download_delay }}"
+          class="w-32 px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all duration-200">
+        <span class="text-sm text-gray-600 dark:text-gray-400">minutes, about</span>
+        <button id="downloadDelaySaveBtn" type="button" onclick="saveDownloadDelay()"
+          class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">
+          Save
+        </button>
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">
+        A download that fails (for example when Cloudflare asks for a check) is tried again after about 5, 15 and 45 minutes,
+        then 2 and 6 hours, before it is marked failed. Failures in a row also lengthen the wait before the next story.
+      </p>
+
+      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 mt-5" for="dailyDownloadLimit">Daily download limit</label>
+      <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">
+        The most stories LitKeeper downloads in a day. Anything beyond it waits in the queue and starts
+        again at midnight UTC. The default is {{ daily_download_default }}.
+      </p>
       <div class="flex flex-wrap items-center gap-3">
         <input type="number" id="dailyDownloadLimit" min="1" max="{{ daily_download_max }}" step="1" inputmode="numeric"
           value="{{ daily_download_limit }}"
@@ -800,6 +835,21 @@
     box.value = data.terms.join('\n');
     document.getElementById('storyFilterCount').textContent = `${data.terms.length} ${data.terms.length === 1 ? 'term' : 'terms'}`;
     showToast('Filter terms saved', 'success');
+  }
+
+  async function saveAutoMarkRead(box) {
+    const data = await notificationRequest('/settings/reading', 'POST', { auto_mark_read: box.checked });
+    if (!data.success) { box.checked = !box.checked; showToast(data.message || 'Error saving the reading setting', 'error'); return; }
+    showToast(data.auto_mark_read ? 'Stories are marked read at the end' : 'Use Mark as Read at the end of a story', 'success');
+  }
+
+  async function saveDownloadDelay() {
+    const button = document.getElementById('downloadDelaySaveBtn');
+    const input = document.getElementById('downloadDelay');
+    const data = await withBusy(button, 'Saving...', () => notificationRequest('/settings/download-delay', 'POST', { minutes: input.value }));
+    if (!data.success) { showToast(data.message || 'Error saving the time between downloads', 'error'); return; }
+    input.value = data.minutes;
+    showToast(data.minutes ? `About ${data.minutes} minutes between downloads` : 'No wait between downloads', 'success');
   }
 
   async function saveDailyDownloadLimit() {
