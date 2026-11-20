@@ -4,7 +4,7 @@ import json
 import os
 import re
 import zipfile
-from flask import Blueprint, send_file, send_from_directory, abort, render_template, make_response
+from flask import Blueprint, send_file, send_from_directory, abort, render_template, make_response, request
 from flask.typing import ResponseReturnValue
 from app.services import log_error
 from app.utils import get_epub_directory, get_html_directory
@@ -53,13 +53,9 @@ def export_epub(story_id: int) -> ResponseReturnValue:
     )
 
 
-@downloads.route("/export/all")
-def export_all_epubs() -> ResponseReturnValue:
-    from app.models import Story
+def _zip_epubs(stories, zip_name: str) -> ResponseReturnValue:
+    """Zip the EPUBs of the given stories, with friendly file names."""
     epub_dir = get_epub_directory()
-
-    stories = Story.query.all()
-
     buf = io.BytesIO()
     seen_names: dict[str, int] = {}
 
@@ -88,9 +84,29 @@ def export_all_epubs() -> ResponseReturnValue:
     data = buf.getvalue()
     response = make_response(data)
     response.headers['Content-Type'] = 'application/zip'
-    response.headers['Content-Disposition'] = 'attachment; filename="litkeeper-library.zip"'
+    response.headers['Content-Disposition'] = f'attachment; filename="{zip_name}"'
     response.headers['Content-Length'] = str(len(data))
     return response
+
+
+@downloads.route("/export/all")
+def export_all_epubs() -> ResponseReturnValue:
+    from app.models import Story
+    return _zip_epubs(Story.query.all(), 'litkeeper-library.zip')
+
+
+@downloads.route("/export/selected")
+def export_selected_epubs() -> ResponseReturnValue:
+    """Zip the EPUBs of the stories picked in the library (?ids=1,2,3)."""
+    from app.models import Story
+    try:
+        ids = [int(i) for i in request.args.get('ids', '').split(',') if i.strip()]
+    except ValueError:
+        abort(400)
+    if not ids:
+        abort(400)
+    stories = Story.query.filter(Story.id.in_(ids)).all()
+    return _zip_epubs(stories, 'litkeeper-selected.zip')
 
 
 @downloads.route("/html/<filename_base>")

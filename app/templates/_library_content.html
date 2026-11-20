@@ -9,7 +9,7 @@
     <p class="text-sm mt-1">Try adjusting your search or filter</p>
   </div>
 {% else %}
-  <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-4">
+  <div class="library-grid grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-4">
     {% for story in stories %}
       {{ story_card_cover_grid(story) }}
     {% endfor %}

@@ -588,6 +588,15 @@ function toggleAddStories() {
       </p>
     </div>
     {% if total_stories > 0 %}
+    <div class="flex items-center gap-2">
+    <button type="button" id="selectModeBtn" onclick="toggleSelectMode()"
+       class="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-600 transition-all duration-200"
+       title="Pick several stories to download, delete or change at once">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+      </svg>
+      <span id="selectModeLabel">Select</span>
+    </button>
     <a href="/download/export/all"
        hx-boost="false"
        data-requires-online
@@ -598,6 +607,7 @@ function toggleAddStories() {
       </svg>
       Export All
     </a>
+    </div>
     {% endif %}
   </div>
 
@@ -826,6 +836,13 @@ function toggleAddStories() {
         </button>
         <div id="viewDropdownPanel"
              class="library-dropdown-panel invisible opacity-0 pointer-events-none absolute z-20 mt-2 right-0 w-56 p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-gray-800 shadow-lg space-y-1">
+          <p class="text-xs font-medium text-gray-500 dark:text-gray-400 px-1 pb-1">Cover size</p>
+          <div id="coverSizeOptions" class="grid grid-cols-4 gap-1 p-1 mb-2 rounded-lg bg-slate-100 dark:bg-gray-900" role="radiogroup" aria-label="Cover size">
+            <button type="button" data-cover-size="small" onclick="setCoverSize('small')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium" title="Small covers">S</button>
+            <button type="button" data-cover-size="medium" onclick="setCoverSize('medium')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium" title="Medium covers">M</button>
+            <button type="button" data-cover-size="large" onclick="setCoverSize('large')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium" title="Large covers">L</button>
+            <button type="button" data-cover-size="xlarge" onclick="setCoverSize('xlarge')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium" title="Extra-large covers">XL</button>
+          </div>
           <p class="text-xs font-medium text-gray-500 dark:text-gray-400 px-1 pb-1">Show under covers</p>
           <label class="flex items-center gap-2 px-1 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-gray-700 cursor-pointer">
             <input type="checkbox" id="viewUserRating" onchange="setLibraryViewOption('user-rating', this.checked)"
@@ -868,7 +885,7 @@ function toggleAddStories() {
         <p class="text-sm mt-1">Download a story to get started</p>
       </div>
     {% else %}
-      <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-4">
+      <div class="library-grid grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-4">
         {% for story in stories %}
           {{ story_card_cover_grid(story) }}
         {% endfor %}
@@ -883,9 +900,84 @@ function toggleAddStories() {
     </div>
   </div>
 </div>
+
+{# Shown while picking stories: what to do with the selection. Sits above the phone tab bar. #}
+<div id="selectionBar" class="hidden fixed left-0 right-0 z-40 px-3 md:px-4"
+     style="bottom: calc(env(safe-area-inset-bottom, 0px) + 4.75rem);">
+  <div class="max-w-3xl mx-auto rounded-xl border border-slate-200 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95 backdrop-blur-md shadow-lg p-3">
+    <div class="flex items-center justify-between gap-2 mb-2">
+      <p class="text-sm font-semibold text-gray-900 dark:text-white"><span id="selectionCount">0</span> selected</p>
+      <div class="flex items-center gap-1">
+        <button type="button" onclick="selectAllShown()" class="px-2 py-1 text-xs font-medium text-primary hover:underline">Select all shown</button>
+        <button type="button" onclick="clearSelection()" class="px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:underline">Clear</button>
+        <button type="button" onclick="toggleSelectMode(false)" class="px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:underline">Done</button>
+      </div>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <button type="button" data-needs-selection onclick="downloadSelected()" class="selection-action">Download</button>
+      <button type="button" data-needs-selection onclick="bulkAction('regenerate_covers', this)" class="selection-action">Redraw Covers</button>
+      {% if ai_covers_ready %}
+      <button type="button" data-needs-selection onclick="bulkAction('ai_covers', this)" class="selection-action">AI Covers</button>
+      {% endif %}
+      <button type="button" data-needs-selection onclick="bulkAction('auto_update_on', this)" class="selection-action">Auto-Update On</button>
+      <button type="button" data-needs-selection onclick="bulkAction('auto_update_off', this)" class="selection-action">Auto-Update Off</button>
+      <button type="button" data-needs-selection onclick="bulkAction('delete', this)" class="selection-action selection-action-danger">Delete</button>
+    </div>
+  </div>
+</div>
 {% endif %}
 
 <style>
+/* Cover sizes. Medium matches the grid's own Tailwind columns, so only the others need rules. */
+#library[data-cover-size="small"] .library-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
+#library[data-cover-size="large"] .library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#library[data-cover-size="xlarge"] .library-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); max-width: 20rem; margin: 0 auto; }
+@media (min-width: 640px) {
+  #library[data-cover-size="small"] .library-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  #library[data-cover-size="large"] .library-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #library[data-cover-size="xlarge"] .library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: none; }
+}
+@media (min-width: 768px) {
+  #library[data-cover-size="small"] .library-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  #library[data-cover-size="large"] .library-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #library[data-cover-size="xlarge"] .library-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (min-width: 1024px) {
+  #library[data-cover-size="small"] .library-grid { grid-template-columns: repeat(9, minmax(0, 1fr)); }
+  #library[data-cover-size="large"] .library-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  #library[data-cover-size="xlarge"] .library-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  #library[data-cover-size="small"] .library-grid { grid-template-columns: repeat(10, minmax(0, 1fr)); }
+}
+.cover-size-option { color: rgb(75 85 99); }
+[data-theme="dark"] .cover-size-option { color: rgb(156 163 175); }
+.cover-size-option[aria-checked="true"] { background: #fff; color: rgb(17 24 39); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+[data-theme="dark"] .cover-size-option[aria-checked="true"] { background: rgb(55 65 81); color: #fff; }
+
+/* Picking several stories */
+.story-select-mark { display: none; }
+#library.selecting .story-select-mark {
+  display: flex; position: absolute; top: 0.4rem; left: 0.4rem; z-index: 2;
+  width: 1.5rem; height: 1.5rem; align-items: center; justify-content: center;
+  border-radius: 9999px; border: 2px solid #fff; background: rgba(0,0,0,.35); color: transparent;
+  box-shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+#library.selecting .story-select-mark svg { width: 0.9rem; height: 0.9rem; }
+#library.selecting [data-story-id].is-selected .story-select-mark { background: #498EDC; color: #fff; }
+#library.selecting [data-story-id].is-selected .story-cover-shadow { outline: 3px solid #498EDC; outline-offset: 2px; }
+#library.selecting [data-story-id]:not(.is-selected) .story-cover-shadow { opacity: .8; }
+#library.selecting { padding-bottom: 9rem; }
+.selection-action {
+  padding: 0.5rem 0.75rem; border-radius: 0.5rem; font-size: 0.8rem; font-weight: 600;
+  border: 1px solid rgb(226 232 240); background: #fff; color: rgb(51 65 85);
+}
+[data-theme="dark"] .selection-action { border-color: rgb(71 85 105); background: rgb(30 41 59); color: rgb(226 232 240); }
+.selection-action:disabled { opacity: .45; cursor: not-allowed; }
+.selection-action-danger { color: rgb(220 38 38); border-color: rgb(254 202 202); }
+[data-theme="dark"] .selection-action-danger { color: rgb(248 113 113); border-color: rgb(127 29 29); }
+@media (min-width: 768px) { #selectionBar { bottom: 1.5rem !important; } }
+
 #library.show-categories .story-category-label { display: block !important; }
 #library.show-page-length .story-page-length-label { display: block !important; }
 #library.show-user-rating .card-user-rating { display: inline-flex !important; }
@@ -1013,6 +1105,191 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
     applyLibraryViewClasses();
   }
 });
+
+// --- Cover size ---
+
+var COVER_SIZES = ['small', 'medium', 'large', 'xlarge'];
+
+function currentCoverSize() {
+  let size = null;
+  try { size = localStorage.getItem('library_cover_size'); } catch (e) {}
+  return COVER_SIZES.includes(size) ? size : 'medium';
+}
+
+function applyCoverSize() {
+  const library = document.getElementById('library');
+  if (!library) return;
+  const size = currentCoverSize();
+  library.dataset.coverSize = size;
+  document.querySelectorAll('.cover-size-option').forEach(btn => {
+    btn.setAttribute('aria-checked', btn.dataset.coverSize === size ? 'true' : 'false');
+  });
+}
+
+function setCoverSize(size) {
+  if (!COVER_SIZES.includes(size)) return;
+  try { localStorage.setItem('library_cover_size', size); } catch (e) {}
+  applyCoverSize();
+}
+
+applyCoverSize();
+
+// --- Picking several stories ---
+
+window.librarySelection = window.librarySelection || new Set();
+var lastPickedStoryId = null;
+
+function librarySelecting() {
+  const library = document.getElementById('library');
+  return !!(library && library.classList.contains('selecting'));
+}
+
+function libraryCards() {
+  return Array.from(document.querySelectorAll('#library [data-story-id]'));
+}
+
+function updateSelectionUi() {
+  const selection = window.librarySelection;
+  libraryCards().forEach(card => card.classList.toggle('is-selected', selection.has(card.dataset.storyId)));
+  const count = document.getElementById('selectionCount');
+  if (count) count.textContent = selection.size;
+  document.querySelectorAll('#selectionBar [data-needs-selection]').forEach(btn => { btn.disabled = selection.size === 0; });
+}
+
+function toggleSelectMode(on) {
+  const library = document.getElementById('library');
+  if (!library) return;
+  const active = on === undefined ? !library.classList.contains('selecting') : on;
+  library.classList.toggle('selecting', active);
+  const bar = document.getElementById('selectionBar');
+  if (bar) bar.classList.toggle('hidden', !active);
+  const label = document.getElementById('selectModeLabel');
+  if (label) label.textContent = active ? 'Done' : 'Select';
+  window.librarySelection.clear();
+  lastPickedStoryId = null;
+  updateSelectionUi();
+}
+
+function selectAllShown() {
+  libraryCards().forEach(card => window.librarySelection.add(card.dataset.storyId));
+  updateSelectionUi();
+}
+
+function clearSelection() {
+  window.librarySelection.clear();
+  lastPickedStoryId = null;
+  updateSelectionUi();
+}
+
+function pickStoryCard(card, withShift) {
+  const id = card.dataset.storyId;
+  const selection = window.librarySelection;
+  if (withShift && lastPickedStoryId) {
+    // Shift-click picks everything between the last story picked and this one.
+    const ids = libraryCards().map(c => c.dataset.storyId);
+    const from = ids.indexOf(lastPickedStoryId), to = ids.indexOf(id);
+    if (from !== -1 && to !== -1) {
+      ids.slice(Math.min(from, to), Math.max(from, to) + 1).forEach(i => selection.add(i));
+      lastPickedStoryId = id;
+      updateSelectionUi();
+      return;
+    }
+  }
+  if (selection.has(id)) selection.delete(id); else selection.add(id);
+  lastPickedStoryId = id;
+  updateSelectionUi();
+}
+
+function downloadSelected() {
+  const ids = Array.from(window.librarySelection);
+  if (!ids.length) return;
+  window.location.href = `/download/export/selected?ids=${ids.join(',')}`;
+}
+
+var BULK_WORDS = {
+  delete: { busy: 'Deleting...', done: n => `Deleted ${n} ${n === 1 ? 'story' : 'stories'}` },
+  regenerate_covers: { busy: 'Redrawing...', done: n => `Redrew ${n} ${n === 1 ? 'cover' : 'covers'}` },
+  ai_covers: { busy: 'Starting...', done: n => `Queued ${n} AI ${n === 1 ? 'cover' : 'covers'}` },
+  auto_update_on: { busy: 'Saving...', done: n => `Auto-update turned on for ${n} ${n === 1 ? 'story' : 'stories'}` },
+  auto_update_off: { busy: 'Saving...', done: n => `Auto-update turned off for ${n} ${n === 1 ? 'story' : 'stories'}` },
+};
+
+async function bulkAction(action, button) {
+  const ids = Array.from(window.librarySelection);
+  const n = ids.length;
+  if (!n) return;
+  const word = n === 1 ? 'story' : 'stories';
+  if (action === 'delete' &&
+      !confirm(`Delete ${n} ${word}? Their EPUBs, reader files and covers are removed too. This can't be undone.`)) return;
+  if (action === 'ai_covers' &&
+      !confirm(`Make AI covers for ${n} ${word}? Each one costs a few cents of OpenRouter credit.`)) return;
+
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = BULK_WORDS[action].busy;
+  let data;
+  try {
+    const response = await fetch('/api/stories/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ids: ids.map(Number) }),
+    });
+    data = await response.json();
+  } catch (e) {
+    data = { success: false, message: 'Could not reach LitKeeper' };
+  } finally {
+    button.textContent = original;
+    button.disabled = false;
+  }
+
+  if (data.message && !data.done) { showToast(data.message, 'error'); return; }
+  const doneText = BULK_WORDS[action].done(data.done || 0);
+  showToast(data.failed ? `${doneText}; ${data.failed} failed (see the main log)` : doneText, data.failed ? 'error' : 'success');
+
+  if (action === 'delete') {
+    window.librarySelection.clear();
+    window.location.reload();
+    return;
+  }
+  if (action === 'regenerate_covers') {
+    const stamp = Date.now();
+    libraryCards().forEach(card => {
+      if (!window.librarySelection.has(card.dataset.storyId)) return;
+      const img = card.querySelector('img');
+      if (img) img.src = `/api/story/${card.dataset.storyId}/cover?t=${stamp}`;
+    });
+  }
+}
+
+if (!window._librarySelectionBound) {
+  window._librarySelectionBound = true;
+  // While picking, a click on a cover picks it instead of opening the story.
+  // This listens before the card's own click handler (capture phase) and stops it.
+  document.addEventListener('click', function (e) {
+    if (!librarySelecting()) return;
+    const card = e.target.closest('#library [data-story-id]');
+    if (!card) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pickStoryCard(card, e.shiftKey);
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && librarySelecting()) toggleSelectMode(false);
+  });
+}
+
+// Keep ticks right when more stories load (scrolling, filtering, refreshing).
+(function watchLibraryForNewCards() {
+  const library = document.getElementById('library');
+  if (!library || library._selectionObserver) return;
+  let pending = false;
+  library._selectionObserver = new MutationObserver(() => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; if (librarySelecting()) updateSelectionUi(); });
+  });
+  library._selectionObserver.observe(library, { childList: true, subtree: true });
+})();
 </script>
 
 {% endblock %}

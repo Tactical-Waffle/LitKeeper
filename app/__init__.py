@@ -50,6 +50,26 @@ def create_app() -> Flask:
     from werkzeug.middleware.proxy_fix import ProxyFix
     app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
+    from app.services.logger import setup_file_logging, log_request
+    setup_file_logging()
+
+    @app.before_request
+    def _start_request_timer():
+        from flask import g
+        g._request_started = time.perf_counter()
+
+    @app.after_request
+    def _log_request(response):
+        from flask import g, request
+        started = getattr(g, '_request_started', None)
+        duration = (time.perf_counter() - started) * 1000 if started else 0
+        client = (request.headers.get('X-Forwarded-For') or request.remote_addr or '').split(',')[0].strip()
+        try:
+            log_request(request.method, request.path, response.status_code, duration, client)
+        except Exception:
+            pass
+        return response
+
     if not _cli_mode:
         print(f"=" * 80)
         print(f"LitKeeper Version: {APP_VERSION}")

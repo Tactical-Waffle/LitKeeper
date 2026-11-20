@@ -1464,6 +1464,37 @@ def get_story_modal(story_id: int) -> ResponseReturnValue:
 
     return render_template('components/story_modal.html', story=story_data)
 
+def _redraw_story_cover(story) -> tuple[str, bool]:
+    """Draw the story's cover again (keeping any AI artwork) and put it in the EPUB.
+    Returns (cover file name, whether the EPUB was updated). Commits."""
+    from app.models.base import db
+    from app.services.epub_service import EpubService
+    from app.services.cover_generator import draw_story_cover
+
+    cover_directory = get_cover_directory()
+    os.makedirs(cover_directory, exist_ok=True)
+    cover_filename = f"{story.id}_{story.filename_base}.jpg"
+    cover_path = os.path.join(cover_directory, cover_filename)
+
+    author_name = story.author.name if story.author else 'Unknown Author'
+    category_name = story.category.name if story.category else None
+    draw_story_cover(story.title, author_name, cover_path, category=category_name)
+    log_action(f"Regenerated cover for story: {story.title}")
+
+    epub_updated = False
+    epub_fmt = next((f for f in story.formats if f.format_type == 'epub'), None)
+    if epub_fmt and os.path.exists(epub_fmt.file_path):
+        if EpubService.update_epub_cover(epub_fmt.file_path, cover_path):
+            epub_updated = True
+            log_action(f"Updated EPUB cover for story: {story.title}")
+        else:
+            log_error(f"Failed to update EPUB cover for story: {story.title}")
+
+    story.cover_filename = cover_filename
+    db.session.commit()
+    return cover_filename, epub_updated
+
+
 @api.route("/story/<int:story_id>/regenerate-cover", methods=['POST'])
 def regenerate_cover(story_id: int) -> ResponseReturnValue:
     """Regenerate cover image for a story and update both the covers directory and EPUB file"""
@@ -1473,30 +1504,7 @@ def regenerate_cover(story_id: int) -> ResponseReturnValue:
         from app.services.epub_service import EpubService
         
         story = Story.query.get_or_404(story_id)
-        
-        cover_directory = get_cover_directory()
-        os.makedirs(cover_directory, exist_ok=True)
-        
-        cover_filename = f"{story.id}_{story.filename_base}.jpg"
-        cover_path = os.path.join(cover_directory, cover_filename)
-        
-        author_name = story.author.name if story.author else 'Unknown Author'
-        category_name = story.category.name if story.category else None
-        from app.services.cover_generator import draw_story_cover
-        draw_story_cover(story.title, author_name, cover_path, category=category_name)
-        log_action(f"Regenerated cover for story: {story.title}")
-        
-        epub_updated = False
-        epub_fmt = next((f for f in story.formats if f.format_type == 'epub'), None)
-        if epub_fmt and os.path.exists(epub_fmt.file_path):
-            if EpubService.update_epub_cover(epub_fmt.file_path, cover_path):
-                epub_updated = True
-                log_action(f"Updated EPUB cover for story: {story.title}")
-            else:
-                log_error(f"Failed to update EPUB cover for story: {story.title}")
-        
-        story.cover_filename = cover_filename
-        db.session.commit()
+        cover_filename, epub_updated = _redraw_story_cover(story)
         
         return jsonify({
             "success": True,
@@ -2426,3 +2434,62 @@ def use_plain_cover(story_id: int) -> ResponseReturnValue:
         log_error(f"Error going back to the plain cover for story {story_id}: {str(e)}\n{traceback.format_exc()}")
         return jsonify({"success": False, "message": "Could not change the cover"}), 500
     return jsonify({"success": True, **ai_cover.info(story)})
+
+
+BULK_ACTIONS = ('delete', 'regenerate_covers', 'ai_covers', 'auto_update_on', 'auto_update_off')
+BULK_MAX_STORIES = 1000
+
+
+@api.route("/stories/bulk", methods=['POST'])
+def bulk_story_action() -> ResponseReturnValue:
+    """Do one thing to several stories picked in the library.
+    Body: {"action": one of BULK_ACTIONS, "ids": [story ids]}. Each story is handled on its own,
+    so one failure doesn't stop the rest; the reply says how many worked."""
+    from app.models import Story, db
+    data = request.get_json(silent=True) or {}
+    action = data.get('action')
+    if action not in BULK_ACTIONS:
+        return jsonify({"success": False, "message": "Unknown action"}), 400
+    try:
+        ids = list(dict.fromkeys(int(i) for i in (data.get('ids') or [])))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "Story ids must be numbers"}), 400
+    if not ids:
+        return jsonify({"success": False, "message": "No stories selected"}), 400
+    if len(ids) > BULK_MAX_STORIES:
+        return jsonify({"success": False, "message": f"Select at most {BULK_MAX_STORIES} stories at once"}), 400
+
+    if action == 'ai_covers':
+        from app.services import ai_cover
+        if not ai_cover.settings()['api_key']:
+            return jsonify({"success": False, "message": "Add an OpenRouter API key in Settings → AI Covers first."}), 400
+
+    stories = {s.id: s for s in Story.query.filter(Story.id.in_(ids)).all()}
+    done, failed = 0, 0
+    for story_id in ids:
+        story = stories.get(story_id)
+        if not story:
+            failed += 1
+            continue
+        try:
+            if action == 'delete':
+                from app.services.story_deletion import StoryDeletionService
+                result = StoryDeletionService().delete_story(story_id)
+                if not result.get('success'):
+                    raise RuntimeError(result.get('message', 'delete failed'))
+            elif action == 'regenerate_covers':
+                _redraw_story_cover(story)
+            elif action == 'ai_covers':
+                from app.services import ai_cover
+                ai_cover.start(current_app._get_current_object(), story_id)
+            else:
+                story.auto_update_enabled = action == 'auto_update_on'
+                db.session.commit()
+            done += 1
+        except Exception as e:
+            db.session.rollback()
+            failed += 1
+            log_error(f"Bulk {action} failed for story {story_id}: {str(e)}")
+
+    log_action(f"Bulk {action}: {done} done, {failed} failed")
+    return jsonify({"success": failed == 0, "done": done, "failed": failed, "action": action})

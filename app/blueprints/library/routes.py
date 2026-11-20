@@ -16,6 +16,16 @@ import json
 
 library = Blueprint('library', __name__)
 
+
+@library.context_processor
+def _library_template_values() -> dict:
+    """Whether the library's selection bar should offer AI covers (only once a key is saved)."""
+    try:
+        from app.services import ai_cover
+        return {'ai_covers_ready': bool(ai_cover.settings()['api_key'])}
+    except Exception:
+        return {'ai_covers_ready': False}
+
 PER_PAGE = 40
 
 def _get_auto_watch_enabled() -> bool:

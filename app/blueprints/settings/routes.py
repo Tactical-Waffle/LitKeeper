@@ -12,8 +12,6 @@ import os
 @settings.route('/')
 def index() -> ResponseReturnValue:
     from flask import url_for
-    theme_config = AppConfig.query.filter_by(key='theme_preference').first()
-    theme_preference = theme_config.get_value() if theme_config else 'system'
     enable_library = os.getenv('ENABLE_LIBRARY', 'true').lower() == 'true'
     passkeys = WebAuthnCredential.query.order_by(WebAuthnCredential.created_at).all()
     auto_lock_config = AppConfig.query.filter_by(key='auto_lock_timeout').first()
@@ -39,7 +37,6 @@ def index() -> ResponseReturnValue:
 
     return render_template(
         'settings.html',
-        theme_preference=theme_preference,
         enable_library=enable_library,
         passkeys=passkeys,
         auto_lock_timeout=auto_lock_timeout,
@@ -59,10 +56,43 @@ def index() -> ResponseReturnValue:
         ai_cover_story_text=ai_cover.STORY_TEXT,
         ai_cover_lettering=ai_cover.LETTERING,
         ai_cover_prompts=ai_prompts.overview(),
+        log_files=_log_file_list(),
         daily_download_limit=dq.get_daily_cap(),
         daily_download_default=dq.DEFAULT_MAX_DAILY_DOWNLOADS,
         daily_download_max=dq.MAX_DAILY_DOWNLOADS_LIMIT,
     )
+
+
+_LOG_LABELS = {'litkeeper.log': 'Main Log', 'api.log': 'API Log'}
+
+
+def _log_file_list() -> list[dict]:
+    from app.services.logger import LOG_FILES, log_file_path
+    files = []
+    for name in LOG_FILES:
+        path = log_file_path(name)
+        size = os.path.getsize(path) if os.path.exists(path) else 0
+        if size >= 1024 * 1024:
+            shown = f'{size / (1024 * 1024):.1f} MB'
+        elif size >= 1024:
+            shown = f'{size / 1024:.0f} KB'
+        else:
+            shown = 'empty' if size == 0 else f'{size} B'
+        files.append({'name': name, 'label': _LOG_LABELS.get(name, name), 'size': shown})
+    return files
+
+
+@settings.route('/logs/<name>', methods=['GET'])
+def download_log(name: str) -> ResponseReturnValue:
+    """Download one of LitKeeper's own log files (only the names in LOG_FILES are allowed)."""
+    from flask import abort, send_file
+    from app.services.logger import LOG_FILES, log_file_path
+    if name not in LOG_FILES:
+        abort(404)
+    path = log_file_path(name)
+    if not os.path.exists(path):
+        open(path, 'a').close()
+    return send_file(path, mimetype='text/plain', as_attachment=True, download_name=name, max_age=0)
 
 
 @settings.route('/theme-preference', methods=['GET'])

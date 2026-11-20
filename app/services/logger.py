@@ -1,7 +1,18 @@
 from __future__ import annotations
 import logging
+import logging.handlers
+import os
 import sys
 from typing import Optional
+
+# Log files live in the data folder (data/logs), so they survive container updates.
+MAIN_LOG = 'litkeeper.log'
+API_LOG = 'api.log'
+LOG_FILES = (MAIN_LOG, API_LOG)
+_LOG_MAX_BYTES = 5 * 1024 * 1024
+_LOG_BACKUPS = 5
+_FORMAT = logging.Formatter('%(asctime)s - %(name)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
 
 def _setup_console_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     """Configure a logger with console/stdout handler for Docker logs."""
@@ -10,8 +21,7 @@ def _setup_console_logger(name: str, level: int = logging.INFO) -> logging.Logge
 
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-        handler.setFormatter(formatter)
+        handler.setFormatter(_FORMAT)
         logger.addHandler(handler)
 
     return logger
@@ -19,6 +29,67 @@ def _setup_console_logger(name: str, level: int = logging.INFO) -> logging.Logge
 action_logger = _setup_console_logger('litkeeper.action')
 error_logger = _setup_console_logger('litkeeper.error', logging.ERROR)
 url_logger = _setup_console_logger('litkeeper.url')
+request_logger = _setup_console_logger('litkeeper.request')
+
+# API calls go only to api.log, never to the console, so `docker logs` isn't flooded
+# by the browser's constant polling.
+api_logger = logging.getLogger('litkeeper.api')
+api_logger.setLevel(logging.INFO)
+api_logger.propagate = False
+
+
+def _file_handler(path: str) -> logging.Handler:
+    handler = logging.handlers.RotatingFileHandler(path, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS,
+                                                   encoding='utf-8', delay=True)
+    handler.setFormatter(_FORMAT)
+    handler._litkeeper_file = True  # marks handlers this module added, so setup can be repeated
+    return handler
+
+
+def log_file_path(name: str) -> str:
+    from app.utils import paths
+    return os.path.join(paths.get_logs_directory(), name)
+
+
+def setup_file_logging() -> None:
+    """Write the main log to data/logs/litkeeper.log and API calls to data/logs/api.log.
+    Both rotate at 5 MB, keeping 5 old files. Safe to call more than once."""
+    try:
+        os.makedirs(os.path.dirname(log_file_path(MAIN_LOG)), exist_ok=True)
+    except OSError as e:
+        print(f"[LOGGING] Could not create the log folder, logging to the console only: {e}", file=sys.stderr)
+        return
+    targets = {MAIN_LOG: (action_logger, error_logger, url_logger, request_logger), API_LOG: (api_logger,)}
+    for name, loggers in targets.items():
+        for logger in loggers:
+            for old in [h for h in logger.handlers if getattr(h, '_litkeeper_file', False)]:
+                logger.removeHandler(old)
+                old.close()
+        handler = _file_handler(log_file_path(name))
+        for logger in loggers:
+            logger.addHandler(handler)
+
+
+def is_api_path(path: str) -> bool:
+    """Requests counted as API calls: the JSON API, the reader's API, the queue's API and the OPDS feed."""
+    return path.startswith(('/api/', '/epub/api/', '/queue/api/', '/opds'))
+
+
+def log_request(method: str, path: str, status: int, duration_ms: float, client: Optional[str]) -> None:
+    """One line per request: API calls to api.log, page loads to the main log. Static files are skipped."""
+    if path.startswith('/static/') or path == '/favicon.ico':
+        return
+    line = f"{method} {path} {status} {duration_ms:.0f} ms {client or '-'}"
+    if is_api_path(path):
+        api_logger.info(line)
+    else:
+        request_logger.info(line)
+
+
+def log_api_call(service: str, method: str, endpoint: str, status: object, duration_ms: float) -> None:
+    """An outgoing call LitKeeper makes to another service's API (e.g. OpenRouter). Never include keys."""
+    api_logger.info(f"-> {service} {method} {endpoint} {status} {duration_ms:.0f} ms")
+
 
 def _log_startup_info() -> None:
     """Log startup notification configuration information."""

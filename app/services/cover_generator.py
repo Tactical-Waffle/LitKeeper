@@ -18,7 +18,6 @@ _CATEGORY_OVERRIDES: dict[str, str] = {
 }
 
 COVER_SIZE = (600, 800)
-COVER_CORNER_RADIUS_FRAC = 0.045  # of the cover width — a light touch; the web UI adds its own CSS rounding on top
 
 KOREADER_CORNER_RADIUS_FRAC = 0.10  # noticeably rounder than the web card, since this is the *entire* visible rounding
 KOREADER_BORDER_WIDTH = 6
@@ -55,9 +54,12 @@ KOREADER_PALETTES = [
 def _finalize_cover_image(image: Image.Image) -> Image.Image:
     """
     Center-crop to the canonical cover aspect ratio (like the web UI's CSS
-    `aspect-[3/4]` + `object-cover`) and bake in lightly rounded white
-    corners. Every served cover (generated or extracted from an EPUB) goes
-    through this before being saved.
+    `aspect-[3/4]` + `object-cover`). Every served cover (generated or
+    extracted from an EPUB) goes through this before being saved.
+
+    Corners stay square: JPEGs can't be transparent, so rounding them here
+    would leave white corners showing in dark mode, at larger cover sizes and
+    in e-readers. The web UI rounds covers with CSS instead.
     """
     image = image.convert("RGB")
     target_w, target_h = COVER_SIZE
@@ -74,16 +76,7 @@ def _finalize_cover_image(image: Image.Image) -> Image.Image:
         top = (h - new_h) // 2
         image = image.crop((0, top, w, top + new_h))
 
-    image = image.resize(COVER_SIZE, Image.Resampling.LANCZOS)
-
-    radius = round(target_w * COVER_CORNER_RADIUS_FRAC)
-    rounded_mask = Image.new("L", COVER_SIZE, 0)
-    ImageDraw.Draw(rounded_mask).rounded_rectangle(
-        [(0, 0), (target_w - 1, target_h - 1)], radius=radius, fill=255)
-
-    result = Image.new("RGB", COVER_SIZE, (255, 255, 255))
-    result.paste(image, (0, 0), mask=rounded_mask)
-    return result
+    return image.resize(COVER_SIZE, Image.Resampling.LANCZOS)
 
 
 def _wrap_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:

@@ -18,7 +18,8 @@ keepalive = 5
 max_requests = 5000
 max_requests_jitter = 100
 
-accesslog = "-"
+# Requests are logged by the app itself: API calls to data/logs/api.log, pages to the main log.
+accesslog = None
 errorlog = "-"
 loglevel = "info"
 

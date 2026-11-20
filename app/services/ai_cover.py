@@ -241,19 +241,29 @@ def _headers(api_key: str = '') -> dict:
     return headers
 
 
+def _log_call(method: str, url: str, status: object, started: float) -> None:
+    """Record an OpenRouter call in api.log: the endpoint and result only, never the key or prompt."""
+    from .logger import log_api_call
+    endpoint = url.split(API, 1)[-1].lstrip('/') if url.startswith(API) else url
+    log_api_call('OpenRouter', method, endpoint, status, (time.perf_counter() - started) * 1000)
+
+
 def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
     """One OpenRouter request, with bounded retries for rate limits and server errors.
     The API key travels in a header and is never logged."""
     body = json.dumps(payload).encode()
     for attempt in range(3):
         request = urllib.request.Request(url, data=body, method='POST', headers=_headers(api_key))
+        started = time.perf_counter()
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 result = json.loads(response.read().decode())
+            _log_call('POST', url, 200, started)
             if result.get('error'):
                 raise ValueError(f"OpenRouter: {result['error'].get('message', 'request failed')}")
             return result
         except urllib.error.HTTPError as error:
+            _log_call('POST', url, error.code, started)
             detail = ''
             try:
                 detail = json.loads(error.read().decode()).get('error', {}).get('message', '')
@@ -268,6 +278,7 @@ def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
                 raise StopError('OpenRouter reports insufficient credits. Top up at openrouter.ai/settings/credits.')
             raise ValueError(f'OpenRouter error {error.code}{": " + detail if detail else ""}')
         except (urllib.error.URLError, TimeoutError) as error:
+            _log_call('POST', url, 'unreachable', started)
             if attempt < 2:
                 time.sleep(10 * (attempt + 1))
                 continue
@@ -278,10 +289,13 @@ def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
 def _get(path: str, api_key: str = '') -> tuple[int, dict]:
     """GET from OpenRouter; returns (status, JSON body). Does not raise for HTTP errors."""
     request = urllib.request.Request(f'{API}/{path}', headers=_headers(api_key))
+    started = time.perf_counter()
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
+            _log_call('GET', path, response.status, started)
             return response.status, json.loads(response.read().decode())
     except urllib.error.HTTPError as error:
+        _log_call('GET', path, error.code, started)
         try:
             return error.code, json.loads(error.read().decode())
         except Exception:

@@ -71,7 +71,23 @@ function showHiddenWarnings() {
   }
 }
 
+// The header's light/dark button: flips the current look and remembers the choice.
+async function toggleTheme() {
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyThemePreference(next);
+  try {
+    await fetch('/settings/theme-preference', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme: next }),
+    });
+  } catch (error) {
+    console.error('Error saving theme preference:', error);
+  }
+}
+
 window.applyThemePreference = applyThemePreference;
+window.toggleTheme = toggleTheme;
 window.showHiddenWarnings = showHiddenWarnings;
 
 initTheme();
