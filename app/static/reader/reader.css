@@ -761,3 +761,13 @@ a:hover {
 
 /* Mark as Read: highlighted once the story is read. */
 #mark-read-btn[data-read="true"] { color: var(--link-color); border-color: var(--link-color); }
+
+/* AI Rewrite: which text is shown, with a link to the other. */
+.story-version-note {
+  margin: -0.75rem 0 1.25rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.8rem;
+  color: var(--secondary-text);
+  text-align: center;
+}
+.story-version-note a { color: var(--link-color); }

@@ -317,6 +317,13 @@ def read_story(story_id: int) -> ResponseReturnValue:
         if story_db.description and not story_data.get('description'):
             story_data['description'] = story_db.description
 
+        from app.services import ai_rewrite
+        # The AI rewrite opens by default when there is one; ?version=original shows the original.
+        has_rewrite = bool(ai_rewrite.edited_parts(story_db))
+        version = 'original' if request.args.get('version') == 'original' or not has_rewrite else 'rewrite'
+        if version == 'rewrite':
+            story_data = ai_rewrite.apply_edits(story_data, story_db)
+
         target_chapter = request.args.get('chapter', type=int)
         target_para = request.args.get('para', type=int)
         epub_fmt = StoryFormat.query.filter_by(story_id=story_db.id, format_type='epub').first()
@@ -327,7 +334,7 @@ def read_story(story_id: int) -> ResponseReturnValue:
                                target_chapter=target_chapter, target_para=target_para,
                                epub_filename=epub_filename,
                                literotica_page_count=story_db.literotica_page_count,
-                               current_rating=story_db.rating)
+                               current_rating=story_db.rating, has_rewrite=has_rewrite, version=version)
 
     except Exception as e:
         log_error(f"Error loading story {story_id}: {str(e)}\n{traceback.format_exc()}")

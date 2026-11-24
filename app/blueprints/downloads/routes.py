@@ -138,6 +138,12 @@ def download_html(filename_base: str) -> ResponseReturnValue:
         log_error(f"Error reading story data for html download {filename_base}: {e}")
         abort(500)
 
+    from app.services import ai_rewrite, ai_summary
+    # The AI rewrite where there is one, unless ?version=original; the AI summary when there is one.
+    if request.args.get('version') != 'original':
+        story_data = ai_rewrite.apply_edits(story_data, story)
+    if ai_summary.summary(story):
+        story_data['ai_summary'] = ai_summary.summary(story)
     html_content = render_template('story_export.html', story=story_data)
     response = make_response(html_content)
     response.headers['Content-Type'] = 'text/html; charset=utf-8'

@@ -1,7 +1,7 @@
 """AI call statistics for Settings: what each OpenRouter call cost and whether it worked, by purpose and model.
 
-Every OpenRouter call LitKeeper makes for an AI cover (the scene description from the text model, a toned-down
-description, and each picture attempt from an image model) is recorded as one line of JSON in
+Every OpenRouter call LitKeeper makes (for an AI cover: the scene description from the text model, a toned-down
+description, and each picture attempt from an image model; each part of an AI Rewrite; each AI summary) is recorded as one line of JSON in
 data/ai-calls.jsonl when it finishes: when, what for, the model, the cost in US dollars as OpenRouter reports it,
 and whether it gave a usable answer. Retries and refused attempts are separate calls.
 
@@ -17,7 +17,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 _lock = threading.Lock()
-KINDS = {'cover_text': 'AI cover descriptions (text model)', 'cover_image': 'AI cover pictures (image model)'}
+KINDS = {'cover_text': 'AI cover descriptions (text model)', 'cover_image': 'AI cover pictures (image model)',
+         'rewrite': 'AI Rewrite', 'summary': 'AI summaries'}
 PERIODS = [('today', 'Today'), ('yesterday', 'Yesterday'), ('week', 'This week'), ('month', 'This month'),
            ('days30', 'Past 30 days'), ('all', 'All time')]
 

@@ -71,7 +71,7 @@ class TestBulkActions:
     def test_auto_update_on_and_off(self, app: Flask, client: FlaskClient, stories) -> None:
         from app.models import Story, db
         response = client.post('/api/stories/bulk', json={'action': 'auto_update_on', 'ids': stories[:2]})
-        assert response.get_json() == {'success': True, 'done': 2, 'failed': 0, 'action': 'auto_update_on'}
+        assert response.get_json() == {'success': True, 'done': 2, 'failed': 0, 'skipped': 0, 'action': 'auto_update_on'}
         with app.app_context():
             assert [db.session.get(Story, i).auto_update_enabled for i in stories] == [True, True, False]
         client.post('/api/stories/bulk', json={'action': 'auto_update_off', 'ids': stories})

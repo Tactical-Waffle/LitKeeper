@@ -56,6 +56,15 @@ class StoryDeletionService:
             except Exception as e:
                 log_error(f"Failed to delete AI cover artwork for story {story_id}: {str(e)}")
 
+            for extra in (f"{story_id}_{filename_base}.edited.json", f"{story_id}_{filename_base}.summary.json"):
+                path = os.path.join(html_dir, extra)  # The AI Rewrite and AI summary, if any.
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                        deleted_files.append(extra)
+                    except OSError as e:
+                        log_error(f"Failed to delete {extra}: {e}")
+
             SeenLiteroticaUrl.query.filter_by(story_id=story.id).delete()
             db.session.delete(story)
             db.session.commit()

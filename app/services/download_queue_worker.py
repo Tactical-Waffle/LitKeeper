@@ -377,6 +377,8 @@ class DownloadQueueWorker:
                 send_notification(f"Story Downloaded: '{item.title or 'Story'}' has been added to your library")
                 from .ai_cover import make_after_download
                 make_after_download(self.app, item.story_id)
+                from .ai_summary import make_after_download as summarize_after_download
+                summarize_after_download(self.app, item.story_id)
 
         except Exception as e:
             error_msg = str(e)

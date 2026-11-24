@@ -689,6 +689,13 @@ def create_app() -> Flask:
         app.format_worker.start()
         atexit.register(app.format_worker.stop)
 
+        from app.services import ai_rewrite, ai_summary
+        for _service in (ai_rewrite, ai_summary):  # AI Rewrite and summary queues saved before a restart.
+            try:
+                _service.restore(app)
+            except Exception as e:
+                print(f"[startup] Could not restore the {_service.__name__} queue: {e}")
+
         from app.services.search_index_worker import SearchIndexWorker
         app.search_index_worker = SearchIndexWorker(app)
         app.search_index_worker.start()

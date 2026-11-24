@@ -32,7 +32,7 @@ def index() -> ResponseReturnValue:
 
     from app.services import notifier
     notification_connections = [notifier.public_view(c) for c in notifier.load_connections()]
-    from app.services import ai_cover, ai_prompts
+    from app.services import ai_cover, ai_prompts, ai_rewrite, ai_summary
     from app.services import download_queue_worker as dq
 
     return render_template(
@@ -58,6 +58,8 @@ def index() -> ResponseReturnValue:
         ai_cover_lettering=ai_cover.LETTERING,
         ai_cover_parallel_max=ai_cover.PARALLEL_MAX,
         ai_cover_prompts=ai_prompts.overview(),
+        ai_rewrite_settings=ai_rewrite.settings(),
+        ai_summary_settings=ai_summary.settings(),
         ai_stats=_ai_stats(),
         log_files=_log_file_list(),
         log_settings=_log_settings(),
@@ -728,6 +730,24 @@ def save_ai_cover_settings() -> ResponseReturnValue:
     log_action("AI cover settings updated")
     return jsonify({'success': True, 'settings': ai_cover.public_settings(),
                     'excerpt_label': ai_cover.excerpt_label(ai_cover.settings())})
+
+
+@settings.route('/ai-text', methods=['POST'])
+def save_ai_text_settings() -> ResponseReturnValue:
+    """Settings → AI Rewrite and Summaries: the rewrite model, the summary model, and automatic summaries."""
+    from app.services import ai_rewrite, ai_summary
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    try:
+        rewrite = ai_rewrite.save_settings(str(data.get('rewrite_model') or ''))
+        summaries = ai_summary.save_settings(str(data.get('summary_model') or ''), bool(data.get('summary_auto')))
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 400
+    log_action(f"AI Rewrite and summary settings saved: rewrite {rewrite['model']}, summaries {summaries['model']}"
+               + (', automatic summaries on' if summaries['auto'] else ''))
+    return jsonify({'success': True, 'rewrite': rewrite, 'summary': summaries})
 
 
 @settings.route('/ai-covers/check', methods=['POST'])

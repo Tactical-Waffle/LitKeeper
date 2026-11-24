@@ -58,6 +58,27 @@ COVER_SAFER = """An image service's safety filter refused the cover description 
 
 Reply with the rewritten description only, about the same length."""
 
+SUMMARY = """You write the short summaries shown in a reading library. Read the story details below and summarize the story.
+
+Rules:
+- At most two sentences and 45 words in all.
+- Say who the story is about and what happens, in the present tense. Give the setup and the central turn; do not reveal the ending.
+- Plain, non-explicit wording: describe sexual content, if any, in general terms only.
+- Do not begin with "This story", "In this story" or the title, and do not mention tags, parts, chapters or Literotica.
+
+Reply with the summary only, with no quotation marks or introduction."""
+
+REWRITE = """You are a careful copy editor for adult fiction. Proofread and copy-edit the story part below.
+
+- Fix spelling, grammar, punctuation, capitalisation and paragraphing, and smooth clumsy sentences.
+- Keep the author's story, voice, tense, point of view, dialogue, explicitness and every event exactly as they are. Do not add, remove, soften or summarise anything.
+- Keep the length within about 10% of the original.
+- Where a character is called only by an initial (such as "B"), give them a fitting first name starting with that letter and use it consistently. If the text is preceded by "Character names already used", keep using those names.
+- Do not use em or en dashes; use commas, full stops or parentheses instead.
+- Separate paragraphs with a blank line. Use plain text, with no headings, notes or Markdown.
+
+Reply with the edited text only."""
+
 PROMPTS = {
     'cover_brief': {'label': 'Scene description (text model)', 'default': COVER_BRIEF,
                     'help': 'Instructions for the text model. It also receives the title, category, tags, the story\'s '
@@ -69,6 +90,12 @@ PROMPTS = {
                                      '{title} the title and {author} the author.'},
     'cover_safer': {'label': 'Toned-down scene after a refusal (text model)', 'default': COVER_SAFER,
                     'help': 'Used when every image model refused a cover. It receives only the refused description.'},
+    'summary': {'label': 'AI summary (text model)', 'default': SUMMARY,
+                'help': 'Instructions for Make Summary. It receives the same title, category, tags, description and story '
+                        'text as the cover\'s scene description (how much is set above).'},
+    'rewrite': {'label': 'AI Rewrite (only when the rewrite model is not a preset)', 'default': REWRITE,
+                'help': 'Sent ahead of each part when Settings → AI Rewrite names a model. An OpenRouter preset '
+                        '(@preset/…) uses its own prompt instead, and this one is not sent.'},
 }
 
 
@@ -107,7 +134,7 @@ def save(values: dict) -> None:
         saved[name] = '' if text == info['default'] else text
     config = AppConfig.query.filter_by(key=KEY).first()
     if not config:
-        config = AppConfig(key=KEY, value_type='json', description='Prompts for AI covers')
+        config = AppConfig(key=KEY, value_type='json', description='Prompts for AI covers, summaries and rewrites')
         db.session.add(config)
     config.set_value({name: value for name, value in saved.items() if value})
     db.session.commit()

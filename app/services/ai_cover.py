@@ -317,23 +317,26 @@ def _log_call(method: str, url: str, status: object, started: float, number: int
     log_api_call('OpenRouter', method, _endpoint(url), status, (time.perf_counter() - started) * 1000, number)
 
 
-def _record_call(url: str, payload: dict, ok: bool, status, result: Optional[dict] = None) -> None:
+def _record_call(url: str, payload: dict, ok: bool, status, result: Optional[dict] = None,
+                 kind: Optional[str] = None) -> None:
     """Settings → AI Statistics: one finished OpenRouter call (what for, the model, its cost, whether it worked)."""
     from . import ai_stats
-    kind = 'cover_image' if url == IMAGES else 'cover_text'
+    kind = kind or ('cover_image' if url == IMAGES else 'cover_text')
     cost = float(((result or {}).get('usage') or {}).get('cost') or 0)
     ai_stats.record(kind, (result or {}).get('model') or payload.get('model') or '', cost, ok, str(status))
 
 
-def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
-    """One OpenRouter request, with bounded retries for rate limits and server errors.
-    The API key travels in a header and is never logged."""
+def _post(url: str, payload: dict, api_key: str, timeout: int = 300, kind: Optional[str] = None,
+          label: str = '') -> dict:
+    """One OpenRouter request, with bounded retries for rate limits and server errors. `kind` is what the call
+    counts as in Settings → AI Statistics (default: a cover's description or picture); `label` says in the log
+    what it is for. The API key travels in a header and is never logged."""
     body = json.dumps(payload).encode()
     for attempt in range(3):
         request = urllib.request.Request(url, data=body, method='POST', headers=_headers(api_key))
         from .logger import log_api_call_started
         # The JSON sent goes on an "API data" line (Settings → Logs can hide it); the key is in a header, never logged.
-        number = log_api_call_started('OpenRouter', 'POST', _endpoint(url), payload)
+        number = log_api_call_started('OpenRouter', 'POST', _endpoint(url) + (f' ({label})' if label else ''), payload)
         started = time.perf_counter()
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -341,13 +344,13 @@ def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
             _log_call('POST', url, 200, started, number)
             # A picture call that returns no picture is a failure too (usually a quiet refusal).
             usable = not result.get('error') and (url != IMAGES or bool((result.get('data') or [{}])[0].get('b64_json')))
-            _record_call(url, payload, usable, 200 if usable else 'no usable answer', result)
+            _record_call(url, payload, usable, 200 if usable else 'no usable answer', result, kind)
             if result.get('error'):
                 raise ValueError(f"OpenRouter: {result['error'].get('message', 'request failed')}")
             return result
         except urllib.error.HTTPError as error:
             _log_call('POST', url, error.code, started, number)
-            _record_call(url, payload, False, error.code)
+            _record_call(url, payload, False, error.code, kind=kind)
             detail = ''
             try:
                 detail = json.loads(error.read().decode()).get('error', {}).get('message', '')
@@ -357,13 +360,13 @@ def _post(url: str, payload: dict, api_key: str, timeout: int = 300) -> dict:
                 time.sleep(10 * (attempt + 1))
                 continue
             if error.code == 401 or (error.code == 403 and not REFUSAL.search(detail)):
-                raise StopError('OpenRouter refused the API key. Check it in Settings → AI Covers.')
+                raise StopError('OpenRouter refused the API key. Check it in Settings → AI Covers (the key is shared by every AI feature).')
             if error.code == 402:
                 raise StopError('OpenRouter reports insufficient credits. Top up at openrouter.ai/settings/credits.')
             raise ValueError(f'OpenRouter error {error.code}{": " + detail if detail else ""}')
         except (urllib.error.URLError, TimeoutError) as error:
             _log_call('POST', url, 'unreachable', started, number)
-            _record_call(url, payload, False, 'unreachable')
+            _record_call(url, payload, False, 'unreachable', kind=kind)
             if attempt < 2:
                 time.sleep(10 * (attempt + 1))
                 continue

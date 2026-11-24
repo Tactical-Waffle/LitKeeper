@@ -439,7 +439,7 @@
       <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
         Paint cover artwork for a story with AI through <a href="https://openrouter.ai" target="_blank" rel="noopener" class="text-primary hover:underline">OpenRouter</a>.
         A text model reads the story and describes a scene; an image model paints it. Uses your own OpenRouter key and credit,
-        and sends story text to OpenRouter only when a cover is made. Make a cover from a story's window with <span class="font-medium">AI Cover</span>.
+        and sends story text to OpenRouter only when a cover is made. The key is also used by AI Rewrite and Summaries below. Make a cover from a story's window with <span class="font-medium">AI Cover</span>.
       </p>
 
       <div class="space-y-3">
@@ -574,6 +574,49 @@
             </button>
           </div>
         </details>
+      </div>
+    </section>
+  </div>
+
+  <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
+    <section id="aiTextSection" style="scroll-margin-top:5rem">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
+        <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+        AI Rewrite and Summaries
+      </h3>
+      <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+        Both use the OpenRouter API key from AI Covers above, and their prompts are under AI Covers → Prompts.
+        <span class="font-medium">AI Rewrite</span> (in a story's window, or for selected stories) proofreads and copy-edits
+        a story one part at a time. The original is always kept: the reader opens the rewrite, with a link to the original,
+        and the EPUB keeps the original text. <span class="font-medium">Make Summary</span> writes one or two sentences,
+        shown in the story's window beside the author's own description. A summary costs a small fraction of a cent;
+        a rewrite costs about as much as the model charges for the story's words, in and out.
+      </p>
+      <div class="space-y-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiRewriteModel">Rewrite preset or model</label>
+            <input type="text" id="aiRewriteModel" autocomplete="off" spellcheck="false" value="{{ ai_rewrite_settings.model }}"
+              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">A preset such as @preset/redkeeper (the same one RedKeeper uses) brings its own model and prompt. A model name such as anthropic/claude-sonnet-4.5 is sent the AI Rewrite prompt. Empty goes back to @preset/redkeeper.</p>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiSummaryModel">Summary model</label>
+            <input type="text" id="aiSummaryModel" autocomplete="off" spellcheck="false" value="{{ ai_summary_settings.model }}"
+              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">It reads the same story text as the AI cover's scene description (set above). Empty goes back to deepseek/deepseek-v4-flash.</p>
+          </div>
+        </div>
+        <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" id="aiSummaryAuto" {{ 'checked' if ai_summary_settings.auto else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
+          <span>Make an AI summary for each newly downloaded story</span>
+        </label>
+        <button type="button" id="aiTextSaveBtn" onclick="saveAiTextSettings()"
+          class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">
+          Save
+        </button>
       </div>
     </section>
   </div>
@@ -1154,6 +1197,20 @@
     document.getElementById('aiCoverTextModel').value = data.settings.text_model;
     document.getElementById('aiCoverImageModel').value = data.settings.image_model;
     document.getElementById('aiCoverFallbacks').value = data.settings.fallback_models.join('\n');
+    showToast('Saved', 'success');
+  }
+
+  async function saveAiTextSettings() {
+    const button = document.getElementById('aiTextSaveBtn');
+    const body = {
+      rewrite_model: document.getElementById('aiRewriteModel').value,
+      summary_model: document.getElementById('aiSummaryModel').value,
+      summary_auto: document.getElementById('aiSummaryAuto').checked,
+    };
+    const data = await withBusy(button, 'Saving...', () => aiCoverRequest('/settings/ai-text', body));
+    if (!data.success) { showToast(data.message || 'Error saving', 'error'); return; }
+    document.getElementById('aiRewriteModel').value = data.rewrite.model;
+    document.getElementById('aiSummaryModel').value = data.summary.model;
     showToast('Saved', 'success');
   }
 

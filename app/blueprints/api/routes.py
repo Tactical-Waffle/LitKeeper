@@ -1439,6 +1439,17 @@ def _ai_cover_info(story) -> dict:
         return {}
 
 
+def _ai_info(module: str, story) -> dict:
+    """The story window's AI Rewrite or AI summary state; never breaks the window."""
+    try:
+        from importlib import import_module
+        service = import_module(f'app.services.{module}')
+        return service.status(story) if module == 'ai_rewrite' else service.info(story)
+    except Exception as e:
+        log_error(f"Error reading {module} state for story {story.id}: {e}")
+        return {}
+
+
 @api.route("/story/<int:story_id>/modal", methods=['GET'])
 def get_story_modal(story_id: int) -> ResponseReturnValue:
     from app.models import Story
@@ -1475,6 +1486,8 @@ def get_story_modal(story_id: int) -> ResponseReturnValue:
         'in_queue': bool(story.in_queue),
         'description': story.description,
         'ai_cover': _ai_cover_info(story),
+        'ai_rewrite': _ai_info('ai_rewrite', story),
+        'ai_summary': _ai_info('ai_summary', story),
         'reading_progress': {
             'percentage': story.reading_progress.percentage,
             'is_completed': story.reading_progress.is_completed,
@@ -2532,7 +2545,85 @@ def ai_covers_missing() -> ResponseReturnValue:
     return jsonify({"success": True, "queued": queued})
 
 
-BULK_ACTIONS = ('delete', 'regenerate_covers', 'ai_covers', 'auto_update_on', 'auto_update_off')
+# --- AI Rewrite and AI summaries -------------------------------------------------------------
+
+_NO_KEY = "Add an OpenRouter API key in Settings → AI Covers first."
+
+
+@api.route("/story/<int:story_id>/ai-rewrite", methods=['GET'])
+def get_ai_rewrite(story_id: int) -> ResponseReturnValue:
+    from app.models import Story
+    from app.services import ai_rewrite
+    story = Story.query.get_or_404(story_id)
+    return jsonify({"success": True, **ai_rewrite.status(story)})
+
+
+@api.route("/story/<int:story_id>/ai-rewrite", methods=['POST'])
+def ai_rewrite_story(story_id: int) -> ResponseReturnValue:
+    """Body {"action": "continue" (rewrite the parts not yet rewritten), "redo" (all parts again),
+    "discard", "stop" (after the current part) or "remove" (from the queue)}."""
+    from app.models import Story
+    from app.services import ai_rewrite
+    story = Story.query.get_or_404(story_id)
+    action = (request.get_json(silent=True) or {}).get('action') or 'continue'
+    if action == 'discard':
+        if ai_rewrite.status(story)['running']:
+            return jsonify({"success": False, "message": "Stop the rewrite before discarding it."}), 409
+        ai_rewrite.discard(story)
+    elif action == 'stop':
+        if not ai_rewrite.request_stop(story.id):
+            return jsonify({"success": False, "message": "This story is not being rewritten."}), 409
+    elif action == 'remove':
+        ai_rewrite.remove(story.id)
+    elif action in ('continue', 'redo'):
+        if not ai_rewrite.api_key():
+            return jsonify({"success": False, "message": _NO_KEY}), 400
+        try:
+            state = ai_rewrite.start(current_app._get_current_object(), story.id, redo=action == 'redo')
+        except ValueError as e:
+            return jsonify({"success": False, "message": str(e)}), 409
+        log_action(f"AI Rewrite {state} for story {story.id}" + (" (all parts again)" if action == 'redo' else ''))
+    else:
+        return jsonify({"success": False, "message": "Unknown action"}), 400
+    return jsonify({"success": True, **ai_rewrite.status(story)})
+
+
+@api.route("/story/<int:story_id>/ai-summary", methods=['GET'])
+def get_ai_summary(story_id: int) -> ResponseReturnValue:
+    from app.models import Story
+    from app.services import ai_summary
+    story = Story.query.get_or_404(story_id)
+    return jsonify({"success": True, **ai_summary.info(story)})
+
+
+@api.route("/story/<int:story_id>/ai-summary", methods=['POST'])
+def ai_summary_story(story_id: int) -> ResponseReturnValue:
+    """Body {"action": "make" (write a new summary in the background), "clear" (delete it), "remove" (from the
+    queue) or "save" with "text" (edit it by hand)}."""
+    from app.models import Story
+    from app.services import ai_summary
+    story = Story.query.get_or_404(story_id)
+    body = request.get_json(silent=True) or {}
+    action = body.get('action') or 'make'
+    try:
+        if action == 'clear':
+            ai_summary.set_summary(story, '')
+        elif action == 'save':
+            ai_summary.set_summary(story, str(body.get('text') or ''), 'edited by hand')
+        elif action == 'remove':
+            ai_summary.remove(story.id)
+        elif action == 'make':
+            if not ai_summary.api_key():
+                return jsonify({"success": False, "message": _NO_KEY}), 400
+            ai_summary.start(current_app._get_current_object(), story.id)
+        else:
+            return jsonify({"success": False, "message": "Unknown action"}), 400
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 409
+    return jsonify({"success": True, **ai_summary.info(story)})
+
+
+BULK_ACTIONS = ('delete', 'regenerate_covers', 'ai_covers', 'ai_rewrite', 'ai_summaries', 'auto_update_on', 'auto_update_off')
 BULK_MAX_STORIES = 1000
 
 
@@ -2555,13 +2646,13 @@ def bulk_story_action() -> ResponseReturnValue:
     if len(ids) > BULK_MAX_STORIES:
         return jsonify({"success": False, "message": f"Select at most {BULK_MAX_STORIES} stories at once"}), 400
 
-    if action == 'ai_covers':
+    if action in ('ai_covers', 'ai_rewrite', 'ai_summaries'):
         from app.services import ai_cover
         if not ai_cover.settings()['api_key']:
             return jsonify({"success": False, "message": "Add an OpenRouter API key in Settings → AI Covers first."}), 400
 
     stories = {s.id: s for s in Story.query.filter(Story.id.in_(ids)).all()}
-    done, failed = 0, 0
+    done, failed, skipped = 0, 0, 0
     for story_id in ids:
         story = stories.get(story_id)
         if not story:
@@ -2578,6 +2669,18 @@ def bulk_story_action() -> ResponseReturnValue:
             elif action == 'ai_covers':
                 from app.services import ai_cover
                 ai_cover.start(current_app._get_current_object(), story_id)
+            elif action == 'ai_rewrite':
+                from app.services import ai_rewrite
+                if not ai_rewrite.words_to_rewrite(story):
+                    skipped += 1  # Already fully rewritten.
+                    continue
+                ai_rewrite.start(current_app._get_current_object(), story_id)
+            elif action == 'ai_summaries':
+                from app.services import ai_summary
+                if ai_summary.summary(story):
+                    skipped += 1  # Already has a summary.
+                    continue
+                ai_summary.start(current_app._get_current_object(), story_id)
             else:
                 story.auto_update_enabled = action == 'auto_update_on'
                 db.session.commit()
@@ -2587,5 +2690,5 @@ def bulk_story_action() -> ResponseReturnValue:
             failed += 1
             log_error(f"Bulk {action} failed for story {story_id}: {str(e)}")
 
-    log_action(f"Bulk {action}: {done} done, {failed} failed")
-    return jsonify({"success": failed == 0, "done": done, "failed": failed, "action": action})
+    log_action(f"Bulk {action}: {done} done, {failed} failed" + (f", {skipped} skipped" if skipped else ''))
+    return jsonify({"success": failed == 0, "done": done, "failed": failed, "skipped": skipped, "action": action})

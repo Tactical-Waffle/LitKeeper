@@ -11,6 +11,13 @@
   </p>
   {% endif %}
 
+  {% if has_rewrite %}
+  <p class="story-version-note">
+    {% if version == 'rewrite' %}AI rewrite · <a href="?version=original">Read the original</a>
+    {% else %}The original text · <a href="?">Read the AI rewrite</a>{% endif %}
+  </p>
+  {% endif %}
+
   {% if story.chapters|length > 1 %}
   <nav class="table-of-contents">
     <h2 class="toc-title">Table of Contents</h2>

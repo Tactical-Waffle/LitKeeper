@@ -977,6 +977,8 @@ function toggleAddStories() {
       <button type="button" data-needs-selection onclick="bulkAction('regenerate_covers', this)" class="selection-action">Redraw Covers</button>
       {% if ai_covers_ready %}
       <button type="button" data-needs-selection onclick="bulkAction('ai_covers', this)" class="selection-action">AI Covers</button>
+      <button type="button" data-needs-selection onclick="bulkAction('ai_rewrite', this)" class="selection-action">AI Rewrite</button>
+      <button type="button" data-needs-selection onclick="bulkAction('ai_summaries', this)" class="selection-action">Summarize</button>
       {% endif %}
       <button type="button" data-needs-selection onclick="bulkAction('auto_update_on', this)" class="selection-action">Auto-Update On</button>
       <button type="button" data-needs-selection onclick="bulkAction('auto_update_off', this)" class="selection-action">Auto-Update Off</button>
@@ -1360,6 +1362,8 @@ var BULK_WORDS = {
   delete: { busy: 'Deleting...', done: n => `Deleted ${n} ${n === 1 ? 'story' : 'stories'}` },
   regenerate_covers: { busy: 'Redrawing...', done: n => `Redrew ${n} ${n === 1 ? 'cover' : 'covers'}` },
   ai_covers: { busy: 'Starting...', done: n => `Queued ${n} AI ${n === 1 ? 'cover' : 'covers'}` },
+  ai_rewrite: { busy: 'Starting...', done: n => `Queued ${n} ${n === 1 ? 'story' : 'stories'} for AI Rewrite` },
+  ai_summaries: { busy: 'Starting...', done: n => `Queued ${n} AI ${n === 1 ? 'summary' : 'summaries'}` },
   auto_update_on: { busy: 'Saving...', done: n => `Auto-update turned on for ${n} ${n === 1 ? 'story' : 'stories'}` },
   auto_update_off: { busy: 'Saving...', done: n => `Auto-update turned off for ${n} ${n === 1 ? 'story' : 'stories'}` },
 };
@@ -1373,6 +1377,10 @@ async function bulkAction(action, button) {
       !confirm(`Delete ${n} ${word}? Their EPUBs, reader files and covers are removed too. This can't be undone.`)) return;
   if (action === 'ai_covers' &&
       !confirm(`Make AI covers for ${n} ${word}? Each one costs a few cents of OpenRouter credit.`)) return;
+  if (action === 'ai_rewrite' &&
+      !confirm(`Rewrite ${n} ${word} with AI? It costs OpenRouter credit for every part not yet rewritten, and runs one story at a time. The original text is kept.`)) return;
+  if (action === 'ai_summaries' &&
+      !confirm(`Write AI summaries for ${n} ${word}? Stories that already have one are skipped. Each costs a small fraction of a cent.`)) return;
 
   const original = button.textContent;
   button.disabled = true;
@@ -1393,7 +1401,7 @@ async function bulkAction(action, button) {
   }
 
   if (data.message && !data.done) { showToast(data.message, 'error'); return; }
-  const doneText = BULK_WORDS[action].done(data.done || 0);
+  const doneText = BULK_WORDS[action].done(data.done || 0) + (data.skipped ? ` (${data.skipped} skipped: already done)` : '');
   showToast(data.failed ? `${doneText}; ${data.failed} failed (see the main log)` : doneText, data.failed ? 'error' : 'success');
 
   if (action === 'delete') {
