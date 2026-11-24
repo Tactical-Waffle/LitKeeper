@@ -968,6 +968,7 @@ function toggleAddStories() {
       <p class="text-sm font-semibold text-gray-900 dark:text-white"><span id="selectionCount">0</span> selected</p>
       <div class="flex items-center gap-1">
         <button type="button" onclick="selectAllShown()" class="px-2 py-1 text-xs font-medium text-primary hover:underline">Select all shown</button>
+        <button type="button" id="selectAllBtn" onclick="selectAllStories(this)" class="px-2 py-1 text-xs font-medium text-primary hover:underline" title="Every story that matches the current search and filters, including ones not loaded yet">Select All</button>
         <button type="button" onclick="clearSelection()" class="px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:underline">Clear</button>
         <button type="button" onclick="toggleSelectMode(false)" class="px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:underline">Done</button>
       </div>
@@ -1325,6 +1326,28 @@ function toggleSelectMode(on) {
 function selectAllShown() {
   libraryCards().forEach(card => window.librarySelection.add(card.dataset.storyId));
   updateSelectionUi();
+}
+
+// Every story matching the current search and filters, not only the ones loaded so far. The "load more" link
+// at the end of the list carries the active filters; without one, everything is already shown.
+async function selectAllStories(button) {
+  const more = document.querySelector('#library [hx-get^="/library/filter?"]');
+  if (!more) { selectAllShown(); return; }
+  const url = new URL(more.getAttribute('hx-get'), location.origin);
+  url.searchParams.set('page', '1');
+  url.searchParams.set('ids_only', '1');
+  const label = button ? button.textContent : '';
+  if (button) { button.disabled = true; button.textContent = 'Selecting...'; }
+  try {
+    const data = await (await fetch(url)).json();
+    libraryCards().forEach(card => window.librarySelection.add(card.dataset.storyId));
+    (data.ids || []).forEach(id => window.librarySelection.add(String(id)));
+    updateSelectionUi();
+  } catch {
+    showToast('Could not select every story', 'error');
+  } finally {
+    if (button) { button.disabled = false; button.textContent = label; }
+  }
 }
 
 function clearSelection() {

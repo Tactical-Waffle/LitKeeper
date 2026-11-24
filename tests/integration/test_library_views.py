@@ -97,3 +97,20 @@ class TestCardsAndPage:
     def test_story_window_cover_opens_full_size(self, client: FlaskClient, library) -> None:
         html = client.get(f"/api/story/{library['romance']}/modal").get_data(as_text=True)
         assert 'openCoverViewer(this.src, this.alt)' in html
+
+
+@pytest.mark.integration
+class TestSelectAll:
+
+    def test_ids_of_every_matching_story_beyond_the_first_page(self, client: FlaskClient, library, add_story) -> None:
+        for n in range(45):
+            add_story(f'Romance Extra {n}', category='Romance')
+        data = client.get('/library/filter?category=Romance&ids_only=1&page=2').get_json()
+        assert data['total'] == 46 and len(data['ids']) == 46  # All of them, whatever page was asked for.
+        assert library['romance'] in data['ids'] and library['scifi'] not in data['ids']
+        data = client.get('/library/filter?search=letters&ids_only=1').get_json()
+        assert data['ids'] == [library['romance']]
+
+    def test_select_all_button_beside_select_all_shown(self, client: FlaskClient, library) -> None:
+        page = client.get('/').get_data(as_text=True)
+        assert page.index('selectAllShown()') < page.index('id="selectAllBtn"')

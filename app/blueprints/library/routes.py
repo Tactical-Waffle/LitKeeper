@@ -192,6 +192,9 @@ def sync_full() -> ResponseReturnValue:
         log_error(f"Error during full sync: {str(e)}\n{traceback.format_exc()}")
         return '', 500
 
+SELECT_ALL_MAX = 100000  # Select All picks every matching story; this only guards against runaway requests.
+
+
 @library.route("/library/filter", methods=["GET"])
 def filter_library() -> ResponseReturnValue:
     try:
@@ -232,10 +235,12 @@ def filter_library() -> ResponseReturnValue:
             read_status=request.args.get('read_status', ''),
         )
 
-        page = request.args.get('page', 1, type=int)
+        # ?ids_only=1: the ids of every story these filters match, for Select All in the library.
+        ids_only = request.args.get('ids_only') == '1'
+        page = 1 if ids_only else request.args.get('page', 1, type=int)
         page_stories, total = get_stories_page(
             page=page,
-            per_page=PER_PAGE,
+            per_page=SELECT_ALL_MAX if ids_only else PER_PAGE,
             search=validated.search,
             category=validated.categories,
             sort_by=validated.sort_by,
@@ -249,6 +254,8 @@ def filter_library() -> ResponseReturnValue:
             source=validated.source,
             user_rating=validated.user_rating,
         )
+        if ids_only:
+            return jsonify({'ids': [story['id'] for story in page_stories], 'total': total})
         has_more = (page * PER_PAGE) < total
 
         next_url_params: dict = {

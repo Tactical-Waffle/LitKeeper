@@ -2624,7 +2624,7 @@ def ai_summary_story(story_id: int) -> ResponseReturnValue:
 
 
 BULK_ACTIONS = ('delete', 'regenerate_covers', 'ai_covers', 'ai_rewrite', 'ai_summaries', 'auto_update_on', 'auto_update_off')
-BULK_MAX_STORIES = 1000
+BULK_MAX_STORIES = 10000  # Select All can pick the whole library.
 
 
 @api.route("/stories/bulk", methods=['POST'])
