@@ -4,8 +4,9 @@ A text model reads the title, category, tags, description and the same story tex
 description (Settings → AI Covers sets how much), and writes a summary with the AI summary prompt (Settings →
 AI Covers → Prompts). At most two sentences are kept (asking once more if the reply is too long).
 
-Literotica stories already have the author's own short description, so the summary is kept beside it rather
-than replacing it: in `stories/html/<id>_<name>.summary.json`, shown in the story window and the HTML download.
+The summary is kept in its own file, `stories/html/<id>_<name>.summary.json`, so a metadata refresh never
+overwrites it; wherever a story's description is shown (the story window, the library's detail view, the HTML
+download), the AI summary is shown instead when there is one.
 Summaries are made one at a time in the background, separately from downloads and the other AI work.
 """
 from __future__ import annotations
@@ -62,13 +63,26 @@ def api_key() -> str:
 # --- The summary ----------------------------------------------------------------------------
 
 def _path(story) -> str:
+    return _path_for(story.id, story.filename_base)
+
+
+def _path_for(story_id: int, filename_base: str) -> str:
     from app.utils import paths
-    return os.path.join(paths.get_html_directory(), f'{story.id}_{story.filename_base}.summary.json')
+    return os.path.join(paths.get_html_directory(), f'{story_id}_{filename_base}.summary.json')
+
+
+def summary_for(story_id: int, filename_base: str) -> str:
+    """The AI summary of a story by id and file name ('' if none), for lists of stories."""
+    return _read(_path_for(story_id, filename_base)).get('text', '')
 
 
 def saved(story) -> dict:
+    return _read(_path(story))
+
+
+def _read(path: str) -> dict:
     try:
-        with open(_path(story), encoding='utf-8') as handle:
+        with open(path, encoding='utf-8') as handle:
             data = json.load(handle)
         return data if isinstance(data, dict) and data.get('text') else {}
     except (OSError, ValueError):

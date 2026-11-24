@@ -74,10 +74,11 @@
 </div>
 {% endif %}
 
-{% if story.description %}
-<p class="text-sm text-gray-700 dark:text-gray-300 mb-3 leading-relaxed italic">{{ story.description }}</p>
-{% endif %}
 {% set summary_ai = story.ai_summary or {} %}
+{# The AI summary, when there is one, is shown instead of the description from Literotica. #}
+{% if story.description %}
+<p class="story-description-text {{ 'hidden' if summary_ai.summary else '' }} text-sm text-gray-700 dark:text-gray-300 mb-3 leading-relaxed italic">{{ story.description }}</p>
+{% endif %}
 <div class="ai-summary-text {{ '' if summary_ai.summary else 'hidden' }} mb-3">
   <p class="text-sm text-gray-700 dark:text-gray-300 leading-relaxed"><span class="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mr-1">AI summary</span><span class="ai-summary-body">{{ summary_ai.summary }}</span></p>
 </div>

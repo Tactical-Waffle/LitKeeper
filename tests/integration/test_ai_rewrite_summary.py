@@ -251,3 +251,37 @@ class TestBulkSettingsAndQueues:
         from app.services.story_deletion import StoryDeletionService
         assert StoryDeletionService().delete_story(story.id)['success']
         assert not any(os.path.exists(p) for p in paths)
+
+
+@pytest.mark.integration
+class TestSummaryReplacesDescription:
+
+    def test_shown_instead_of_the_literotica_description(self, client: FlaskClient, story, add_story) -> None:
+        ai_summary.set_summary(story, 'Brian meets a woman at a bar and they talk all night.')
+        modal = client.get(f'/api/story/{story.id}/modal').get_data(as_text=True)
+        assert 'Brian meets a woman' in modal
+        assert 'story-description-text hidden' in modal  # The Literotica description is hidden, not shown too.
+        export = client.get(f'/download/html/{story.filename_base}').get_data(as_text=True)
+        assert 'Brian meets a woman' in export and "The author&#39;s own blurb." not in export
+        cards = client.get('/library/filter?search=').get_data(as_text=True)
+        assert 'Brian meets a woman' in cards and "The author&#39;s own blurb." not in cards
+        ai_summary.set_summary(story, '')
+        modal = client.get(f'/api/story/{story.id}/modal').get_data(as_text=True)
+        assert 'story-description-text hidden' not in modal and "The author&#39;s own blurb." in modal
+
+
+@pytest.mark.integration
+class TestStoryWindowSpeed:
+
+    def test_story_text_is_not_read_without_a_rewrite(self, client: FlaskClient, story) -> None:
+        with patch('app.services.ai_cover._chapters', side_effect=AssertionError('story text read')):
+            assert client.get(f'/api/story/{story.id}/modal').status_code == 200
+        assert ai_rewrite.status(story)['total'] >= 1
+
+    def test_stored_story_text_is_not_loaded_with_the_story(self, app: Flask, story) -> None:
+        from sqlalchemy import inspect
+        from app.models import Story, db
+        with app.app_context():
+            loaded = db.session.get(Story, story.id)
+            fmt = loaded.formats[0]
+            assert 'json_data' in inspect(fmt).unloaded

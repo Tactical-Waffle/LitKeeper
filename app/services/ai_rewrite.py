@@ -118,11 +118,13 @@ def plain(paragraph) -> str:
     return html.unescape(_TAG.sub('', text)).strip()
 
 
-def edited_parts(story) -> dict:
+def edited_parts(story, chapters: list | None = None) -> dict:
     """Rewritten paragraphs by part number, only where the rewrite matches the current original part."""
+    if not os.path.exists(_path(story)):
+        return {}
     edits = load_edits(story)['parts']
     result = {}
-    for index, chapter in enumerate(_chapters(story)):
+    for index, chapter in enumerate(chapters if chapters is not None else _chapters(story)):
         number = _number(chapter, index)
         edit = edits.get(number)
         if edit and edit.get('paragraphs') and edit.get('source') == _fingerprint(chapter.get('paragraphs', [])):
@@ -150,15 +152,18 @@ def words_to_rewrite(story) -> int:
 
 
 def status(story) -> dict:
-    """What the story window shows: progress, flags, cost, and whether a run is queued or running."""
-    chapters = _chapters(story)
-    edits = edited_parts(story)
-    data = load_edits(story)
+    """What the story window shows: progress, flags, cost, and whether a run is queued or running.
+    Without a rewrite file the story text is not read at all (the window opens on every click)."""
+    has_file = os.path.exists(_path(story))
+    chapters = _chapters(story) if has_file else []
+    total = len(chapters) if has_file else max(1, story.chapter_count or 1)
+    edits = edited_parts(story, chapters) if has_file else {}
+    data = load_edits(story) if has_file else {}
     with _lock:
         running = _running.get('story_id') == story.id
         queued = story.id in _queue
     flags = {n: e['flags'] for n, e in sorted(edits.items(), key=lambda item: float(item[0])) if e.get('flags')}
-    return {'total': len(chapters), 'done': len(edits), 'flags': flags, 'flagged': list(flags),
+    return {'total': total, 'done': len(edits), 'flags': flags, 'flagged': list(flags),
             'running': running, 'queued': queued, 'live': progress() if running else {},
             'error': data.get('error', ''), 'cost': data.get('cost', 0.0), 'tokens': data.get('tokens', 0),
             'model': data.get('model', ''), 'finished': data.get('finished'), 'stopped': data.get('stopped', ''),

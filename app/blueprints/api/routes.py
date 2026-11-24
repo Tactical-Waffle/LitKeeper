@@ -1453,9 +1453,11 @@ def _ai_info(module: str, story) -> dict:
 @api.route("/story/<int:story_id>/modal", methods=['GET'])
 def get_story_modal(story_id: int) -> ResponseReturnValue:
     from app.models import Story
-    
+    import time as _time
+    started = _time.perf_counter()
     story = Story.query.get_or_404(story_id)
-    
+    loaded = _time.perf_counter()
+
     story_data = {
         'id': story.id,
         'title': story.title,
@@ -1488,13 +1490,20 @@ def get_story_modal(story_id: int) -> ResponseReturnValue:
         'ai_cover': _ai_cover_info(story),
         'ai_rewrite': _ai_info('ai_rewrite', story),
         'ai_summary': _ai_info('ai_summary', story),
+        'gathered_at': _time.perf_counter(),
         'reading_progress': {
             'percentage': story.reading_progress.percentage,
             'is_completed': story.reading_progress.is_completed,
         } if story.reading_progress and story.reading_progress.percentage else None,
     }
 
-    return render_template('components/story_modal.html', story=story_data)
+    html = render_template('components/story_modal.html', story=story_data)
+    done = _time.perf_counter()
+    if done - started > 0.5:  # Settings → Logs: where the time went when the story window is slow to open.
+        log_action(f"Story window for story {story_id} took {(done - started) * 1000:.0f} ms: loading the story "
+                   f"{(loaded - started) * 1000:.0f} ms, its details {(story_data['gathered_at'] - loaded) * 1000:.0f} ms, "
+                   f"drawing it {(done - story_data['gathered_at']) * 1000:.0f} ms")
+    return html
 
 def _redraw_story_cover(story) -> tuple[str, bool]:
     """Draw the story's cover again (keeping any AI artwork) and put it in the EPUB.

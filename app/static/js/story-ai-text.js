@@ -131,6 +131,8 @@
       if (body) body.textContent = info.summary || '';
       text.classList.toggle('hidden', !info.summary);
     });
+    // The AI summary replaces the description from Literotica; clearing it brings the description back.
+    document.querySelectorAll('.story-description-text').forEach(p => p.classList.toggle('hidden', !!info.summary));
     boxes('summary', storyId).forEach(container => drawSummaryInto(container, storyId, info));
     if (info.running || info.queued) poll('summary', storyId);
   }
@@ -171,4 +173,57 @@
       draw(Number(box.dataset.storyId), state);
     }
   };
+})();
+
+// The story window opens the moment a story is clicked: its cover and title from the library card, with
+// "Loading…", until the details arrive (usually at once; slower while the server is busy with downloads).
+(function () {
+  let placeholderShown = false;
+
+  document.addEventListener('htmx:beforeRequest', event => {
+    const card = event.detail.elt;
+    if (!card || !card.matches || !card.matches('.story-card[data-story-id]')) return;
+    const container = document.getElementById('modal-container');
+    if (!container || container.children.length) return;
+    const title = card.querySelector('.card-info-title')?.textContent || card.querySelector('img')?.alt || '';
+    const cover = card.querySelector('img')?.getAttribute('src') || '';
+    container.innerHTML = `
+      <div data-placeholder class="fixed top-0 left-0 right-0 modal-bottom-inset z-50 flex items-end md:items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div class="w-full md:max-w-4xl md:mx-4 max-h-[88vh] md:max-h-[90vh] bg-white dark:bg-gray-800 rounded-t-2xl md:rounded-xl shadow-2xl overflow-hidden relative">
+          <div class="p-5 md:p-8 flex gap-4 md:gap-8">
+            <div class="flex-shrink-0 w-20 h-28 md:w-48 md:h-64 rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700">
+              ${cover ? '<img alt="" class="w-full h-full object-cover">' : ''}
+            </div>
+            <div class="flex-1 min-w-0">
+              <h2 class="text-xl md:text-2xl font-bold text-gray-900 dark:text-white mb-3" data-title></h2>
+              <p class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                <span class="animate-spin rounded-full h-4 w-4 border-2 border-slate-300 dark:border-slate-600 border-t-slate-600 dark:border-t-slate-300"></span>
+                Loading…
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    container.querySelector('[data-title]').textContent = title;
+    if (cover) container.querySelector('img').src = cover;
+    container.querySelector('[data-placeholder]').addEventListener('click', e => {
+      if (e.target === e.currentTarget && window.closeStoryModal) window.closeStoryModal();
+    });
+    placeholderShown = true;
+  });
+
+  // The real window replaces the placeholder without sliding in (the placeholder has its own ids, so htmx does
+  // not carry its attributes over).
+  document.addEventListener('htmx:afterSwap', event => {
+    if (!placeholderShown || event.detail.target?.id !== 'modal-container') return;
+    placeholderShown = false;
+    document.getElementById('storyModalSheet')?.classList.remove('modal-sheet-enter');
+  });
+  // If the details could not be loaded, the placeholder goes away (the card shows the error).
+  document.addEventListener('htmx:afterRequest', event => {
+    if (!placeholderShown || event.detail.successful) return;
+    placeholderShown = false;
+    const container = document.getElementById('modal-container');
+    if (container?.querySelector('[data-placeholder]')) container.innerHTML = '';
+  });
 })();

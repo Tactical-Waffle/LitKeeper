@@ -27,6 +27,17 @@ def get_queue_count() -> int:
     return Story.query.filter(Story.in_queue == True).count()  # noqa: E712
 
 
+def _with_summaries(stories: list) -> list:
+    """A story's AI summary, where it has one, is shown in place of the description from Literotica."""
+    from app.services import ai_summary
+    for story in stories:
+        text = ai_summary.summary_for(story['id'], story['filename_base'])
+        if text:
+            story['description'] = text
+            story['description_is_ai'] = True
+    return stories
+
+
 def get_stories_page(
     page: int = 1,
     per_page: int = 40,
@@ -148,7 +159,7 @@ def get_stories_page(
 
         total = len(all_stories)
         start = (page - 1) * per_page
-        return all_stories[start:start + per_page], total
+        return _with_summaries(all_stories[start:start + per_page]), total
 
     # Full DB-level filtering + sorting + pagination
     query = _apply_filters(Story.query)
@@ -171,4 +182,4 @@ def get_stories_page(
 
     total = query.count()
     page_stories = query.offset((page - 1) * per_page).limit(per_page).all()
-    return [s.to_library_dict() for s in page_stories], total
+    return _with_summaries([s.to_library_dict() for s in page_stories]), total

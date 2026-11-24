@@ -1,4 +1,5 @@
 from __future__ import annotations
+from sqlalchemy.orm import deferred
 from .base import db, BaseModel, TimestampMixin
 
 class StoryFormat(BaseModel, TimestampMixin):
@@ -12,7 +13,9 @@ class StoryFormat(BaseModel, TimestampMixin):
     file_size = db.Column(db.Integer)
     file_hash = db.Column(db.String(64))
 
-    json_data = db.Column(db.Text)
+    # The story's whole text. Loaded only when read: every story load (the library, each cover, the story
+    # window) used to fetch it with the formats, though almost nothing uses it.
+    json_data = deferred(db.Column(db.Text))
 
     story = db.relationship('Story', back_populates='formats')
 
