@@ -39,10 +39,13 @@ class TestDailyDownloadLimit:
 
     def test_bad_environment_variable_falls_back(self, app, monkeypatch) -> None:
         from app.services import download_queue_worker as dq
-        for bad in ('lots', '0', '-5'):
+        for bad in ('lots', '-5'):
             monkeypatch.setenv('MAX_DAILY_DOWNLOADS', bad)
             with app.app_context():
                 assert dq.get_daily_cap() == dq.DEFAULT_MAX_DAILY_DOWNLOADS
+        monkeypatch.setenv('MAX_DAILY_DOWNLOADS', '0')  # No limit, as in Settings.
+        with app.app_context():
+            assert dq.get_daily_cap() == 0
 
     def test_save_and_show_on_settings_page(self, client: FlaskClient) -> None:
         response = client.post('/settings/daily-downloads', json={'limit': '60'})
@@ -52,7 +55,7 @@ class TestDailyDownloadLimit:
         assert b'downloadsSection' in page.data
         assert b'value="60"' in page.data
 
-    @pytest.mark.parametrize('bad', [None, '', 'abc', '2.5', 0, -1, 10001])
+    @pytest.mark.parametrize('bad', [None, '', 'abc', '2.5', -1, 10001])
     def test_rejects_bad_values(self, client: FlaskClient, bad) -> None:
         response = client.post('/settings/daily-downloads', json={'limit': bad})
         assert response.status_code == 400

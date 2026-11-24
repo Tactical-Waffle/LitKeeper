@@ -4,3 +4,5 @@
 <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-green-500"></span><strong class="text-gray-900 dark:text-white">{{ completed }}</strong> done</span>
 <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-red-500"></span><strong class="text-gray-900 dark:text-white">{{ failed }}</strong> failed</span>
 {% if rate_limited %}<span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-orange-500"></span><strong class="text-gray-900 dark:text-white">{{ rate_limited }}</strong> paused until tomorrow</span>{% endif %}
+{% if paused_until %}<span class="inline-flex items-center gap-1.5 text-orange-700 dark:text-orange-400" data-downloads-paused title="{{ pause_after }} downloads failed in a row, so LitKeeper stopped asking Literotica until midnight UTC"><span class="w-2 h-2 rounded-full bg-orange-500"></span>Downloads paused until {{ paused_until }} after {{ pause_after }} failures in a row
+  <button type="button" onclick="resumeDownloads()" class="font-semibold underline">Resume now</button></span>{% endif %}

@@ -13,7 +13,7 @@ from app.services import download_queue_worker as dq
 pytestmark = [pytest.mark.filterwarnings('ignore:datetime.datetime.utcnow:DeprecationWarning'),
               pytest.mark.filterwarnings('ignore::sqlalchemy.exc.LegacyAPIWarning')]
 
-KEYS = (dq.DOWNLOAD_DELAY_KEY, dq.NEXT_DOWNLOAD_KEY, 'auto_mark_read')
+KEYS = (dq.DOWNLOAD_DELAY_KEY, dq.NEXT_DOWNLOAD_KEY, dq.FAILURES_KEY, dq.PAUSED_UNTIL_KEY, dq.DAILY_CAP_KEY, 'auto_mark_read')
 
 
 @pytest.fixture(autouse=True)
@@ -125,7 +125,8 @@ class TestWorkerPacing:
         item_id = _add_item(app, clean + '-cf')
         worker = _worker(app)
         with app.app_context(), patch.object(worker, '_download_and_save', side_effect=Exception('Cloudflare check')), \
-             patch.object(dq.global_rate_limiter, 'wait_if_needed'), patch.object(dq.random, 'uniform', return_value=1.0):
+             patch.object(dq.global_rate_limiter, 'wait_if_needed'), patch.object(dq.random, 'uniform', return_value=1.0), \
+             patch.object(dq, 'PAUSE_AFTER_FAILURES', 100):  # Here: the waits, not the pause until tomorrow.
             worker._process_next_item()
             item = db.session.get(DownloadQueueItem, item_id)
             assert item.status == 'pending' and item.retry_count == 1
@@ -148,6 +149,53 @@ class TestWorkerPacing:
             worker._process_next_item()
             item = db.session.get(DownloadQueueItem, item_id)
             assert item.status == 'failed' and item.retry_count == 6
+
+    def test_failures_in_a_row_pause_downloads_until_tomorrow(self, app: Flask, client: FlaskClient, clean) -> None:
+        from app.models import DownloadQueueItem, db
+        ids = [_add_item(app, f'{clean}-cf{n}') for n in range(4)]
+        worker = _worker(app)
+        with app.app_context(), patch.object(worker, '_download_and_save', side_effect=Exception('HTTP 403')), \
+             patch.object(dq.global_rate_limiter, 'wait_if_needed'), patch('app.services.notifier.send_notification') as notify:
+            for n in range(dq.PAUSE_AFTER_FAILURES):
+                assert dq.paused_until() is None
+                dq._store_next_download_at(None)
+                worker._process_next_item()
+            until = dq.paused_until()
+            tomorrow = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            assert until == tomorrow and notify.call_args.kwargs.get('is_error')
+            assert dq.failures_in_a_row() == 0
+        with app.app_context(), patch.object(worker, '_download_and_save') as download:
+            worker._process_next_item()
+            download.assert_not_called()  # Paused: nothing until tomorrow.
+            assert db.session.get(DownloadQueueItem, ids[3]).status == 'pending'
+        stats = client.get('/queue/partials/stats').get_data(as_text=True)
+        assert 'Downloads paused until 00:00 UTC' in stats and 'Resume now' in stats
+        assert client.post('/queue/api/downloads/resume').get_json()['success']
+        with app.app_context():
+            assert dq.paused_until() is None and dq.failures_in_a_row() == 0
+        assert 'Downloads paused' not in client.get('/queue/partials/stats').get_data(as_text=True)
+
+    def test_a_success_resets_the_count(self, app: Flask, clean) -> None:
+        worker = _worker(app)
+        with app.app_context(), patch.object(dq.random, 'uniform', return_value=1.0):
+            worker._plan_next_download(failed=True)
+            worker._plan_next_download(failed=True)
+            assert dq.failures_in_a_row() == 2
+            worker._plan_next_download(failed=False)
+            assert dq.failures_in_a_row() == 0 and dq.paused_until() is None
+
+    def test_daily_limit_zero_means_unlimited(self, app: Flask, client: FlaskClient, clean) -> None:
+        from app.models import DownloadQueueItem
+        assert client.post('/settings/daily-downloads', json={'limit': 0}).get_json() == {'success': True, 'limit': 0}
+        assert 'value="0"' in client.get('/settings/').get_data(as_text=True)
+        item_id = _add_item(app, clean + '-unlimited')
+        worker = dq.DownloadQueueWorker(app)
+        with app.app_context(), patch.object(worker, '_daily_downloads_today', return_value=5000), \
+             patch.object(worker, '_download_and_save', return_value=True), patch.object(dq.global_rate_limiter, 'wait_if_needed'), \
+             patch('app.services.notifier.send_notification'), patch('app.services.ai_cover.make_after_download'):
+            assert dq.get_daily_cap() == 0
+            worker._process_next_item()
+            assert DownloadQueueItem.query.get(item_id).status == 'completed'
 
     def test_queue_page_shows_waits(self, app: Flask, client: FlaskClient, clean) -> None:
         from app.models import DownloadQueueItem, db

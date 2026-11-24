@@ -79,7 +79,7 @@ def index() -> ResponseReturnValue:
                            failed=DownloadQueueItem.query.filter_by(status='failed').count(),
                            rate_limited=rate_limited_count,
                            queue_list=_list_values(all_items),
-                           ai=_ai_queue(), metadata=_metadata_queue())
+                           ai=_ai_queue(), metadata=_metadata_queue(), **_paused())
 
 @queue.route('/api/items')
 def get_queue_items() -> ResponseReturnValue:
@@ -112,6 +112,26 @@ def get_queue_item(item_id: int) -> ResponseReturnValue:
         log_error(f"Error fetching queue item {item_id}: {str(e)}")
         return jsonify({'error': 'Failed to fetch queue item'}), 500
 
+def _paused() -> dict:
+    """Downloads paused until tomorrow after failures in a row, for the Queue page."""
+    from app.services import download_queue_worker as dq
+    until = dq.paused_until()
+    return {'paused_until': f"{until:%H:%M} UTC" if until else None, 'pause_after': dq.PAUSE_AFTER_FAILURES}
+
+
+@queue.route('/api/downloads/resume', methods=['POST'])
+def resume_downloads() -> ResponseReturnValue:
+    """Resume Now: start downloading again before tomorrow."""
+    from flask import current_app
+    from app.services import download_queue_worker as dq
+    dq.resume_downloads()
+    log_action("[Queue] Downloads resumed by hand")
+    worker = getattr(current_app, 'download_worker', None)
+    if worker:
+        worker.wake()
+    return jsonify({'success': True})
+
+
 @queue.route('/api/stats')
 def get_queue_stats() -> ResponseReturnValue:
     """Get queue statistics"""
@@ -139,7 +159,7 @@ def queue_stats_partial() -> ResponseReturnValue:
             'failed': DownloadQueueItem.query.filter_by(status='failed').count(),
             'rate_limited': DownloadQueueItem.query.filter_by(status='rate_limited').count(),
         }
-        return render_template('queue/partials/stats.html', **stats)
+        return render_template('queue/partials/stats.html', **stats, **_paused())
     except Exception as e:
         log_error(f"Error rendering queue stats: {str(e)}")
         return '<div class="text-red-600 dark:text-red-400">Error loading stats</div>', 500

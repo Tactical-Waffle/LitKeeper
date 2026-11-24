@@ -26,19 +26,24 @@ RETRY_DELAYS_MINUTES = (5, 15, 45, 120, 360)
 MAX_ATTEMPTS = len(RETRY_DELAYS_MINUTES) + 1
 # Failures in a row also stretch the wait before the next download of any story, up to this.
 FAILURE_GAP_CAP_MINUTES = 240
+# After this many downloads in a row fail (usually Literotica or Cloudflare refusing requests), downloads stop
+# until midnight UTC, when the daily limit starts again, instead of asking again and again.
+PAUSE_AFTER_FAILURES = 3
+FAILURES_KEY = 'download_failures_in_a_row'
+PAUSED_UNTIL_KEY = 'downloads_paused_until'
 
 
 def env_daily_cap() -> Optional[int]:
-    """The MAX_DAILY_DOWNLOADS environment variable, if it holds a usable number."""
+    """The MAX_DAILY_DOWNLOADS environment variable, if it holds a usable number (0 is unlimited)."""
     try:
         value = int(os.environ['MAX_DAILY_DOWNLOADS'])
     except (KeyError, ValueError):
         return None
-    return value if value > 0 else None
+    return value if value >= 0 else None
 
 
 def saved_daily_cap() -> Optional[int]:
-    """The limit saved in Settings, if any. Needs an app context."""
+    """The limit saved in Settings, if any (0 is unlimited). Needs an app context."""
     from app.models import AppConfig
     cfg = AppConfig.query.filter_by(key=DAILY_CAP_KEY).first()
     if not cfg:
@@ -47,12 +52,67 @@ def saved_daily_cap() -> Optional[int]:
         value = int(cfg.get_value())
     except (TypeError, ValueError):
         return None
-    return value if value > 0 else None
+    return value if value >= 0 else None
 
 
 def get_daily_cap() -> int:
-    """Settings wins, then the MAX_DAILY_DOWNLOADS environment variable, then the default."""
-    return saved_daily_cap() or env_daily_cap() or DEFAULT_MAX_DAILY_DOWNLOADS
+    """Settings wins, then the MAX_DAILY_DOWNLOADS environment variable, then the default. 0 means no limit."""
+    for value in (saved_daily_cap(), env_daily_cap()):
+        if value is not None:
+            return value
+    return DEFAULT_MAX_DAILY_DOWNLOADS
+
+
+def over_daily_cap(count: int, cap: int) -> bool:
+    return bool(cap) and count >= cap
+
+
+def _config(key: str):
+    from app.models import AppConfig
+    return AppConfig.query.filter_by(key=key).first()
+
+
+def _store(key: str, value: Optional[str], description: str) -> None:
+    from app.models import AppConfig, db
+    cfg = _config(key)
+    if not cfg:
+        cfg = AppConfig(key=key, value_type='string', description=description)
+        db.session.add(cfg)
+    cfg.value = value
+    db.session.commit()
+
+
+def failures_in_a_row() -> int:
+    """Downloads that failed in a row, kept in the database so a restart doesn't forget them."""
+    cfg = _config(FAILURES_KEY)
+    try:
+        return max(0, int(cfg.value)) if cfg and cfg.value else 0
+    except ValueError:
+        return 0
+
+
+def paused_until() -> Optional[datetime]:
+    """When downloads start again after repeated failures (UTC), or None when they aren't paused."""
+    cfg = _config(PAUSED_UNTIL_KEY)
+    try:
+        when = datetime.fromisoformat(cfg.value) if cfg and cfg.value else None
+    except ValueError:
+        return None
+    return when if when and when > datetime.utcnow() else None
+
+
+def pause_until_tomorrow() -> datetime:
+    """Stop downloading until midnight UTC."""
+    tomorrow = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    _store(PAUSED_UNTIL_KEY, tomorrow.isoformat(), 'Downloads paused after failures in a row, until (UTC)')
+    return tomorrow
+
+
+def resume_downloads() -> None:
+    """Start downloading again now (the Queue page's Resume Now)."""
+    _store(PAUSED_UNTIL_KEY, None, 'Downloads paused after failures in a row, until (UTC)')
+    _store(FAILURES_KEY, '0', 'Downloads that failed in a row')
+    _store_next_download_at(None)
 
 
 def save_daily_cap(value) -> int:
@@ -62,8 +122,8 @@ def save_daily_cap(value) -> int:
         number = int(str(value).strip())
     except (TypeError, ValueError):
         raise ValueError('Enter a whole number.')
-    if number < 1 or number > MAX_DAILY_DOWNLOADS_LIMIT:
-        raise ValueError(f'Enter a number from 1 to {MAX_DAILY_DOWNLOADS_LIMIT}.')
+    if number < 0 or number > MAX_DAILY_DOWNLOADS_LIMIT:
+        raise ValueError(f'Enter a number from 0 (no limit) to {MAX_DAILY_DOWNLOADS_LIMIT}.')
     cfg = AppConfig.query.filter_by(key=DAILY_CAP_KEY).first()
     if not cfg:
         cfg = AppConfig(key=DAILY_CAP_KEY, value_type='int', description='Maximum stories downloaded per day')
@@ -154,7 +214,6 @@ class DownloadQueueWorker:
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
         self._last_rate_limit_reset_date: Optional[str] = None
-        self._failures_in_a_row = 0
 
     def start(self):
         """Start the background worker thread"""
@@ -239,10 +298,24 @@ class DownloadQueueWorker:
         """After a visit to Literotica: wait about the set number of minutes before the next one,
         doubling with each failure in a row (a Cloudflare check tends to last a while)."""
         from .logger import log_action
-        self._failures_in_a_row = self._failures_in_a_row + 1 if failed else 0
+        failures = failures_in_a_row() + 1 if failed else 0
+        _store(FAILURES_KEY, str(failures), 'Downloads that failed in a row')
+        if failures >= PAUSE_AFTER_FAILURES:
+            until = pause_until_tomorrow()
+            _store(FAILURES_KEY, '0', 'Downloads that failed in a row')
+            _store_next_download_at(None)
+            log_action(f"[DOWNLOAD WORKER] {failures} downloads failed in a row (Literotica or Cloudflare is probably "
+                       f"refusing requests): downloads are paused until {until:%Y-%m-%d %H:%M} UTC")
+            try:
+                from .notifier import send_notification
+                send_notification(f"Downloads paused until tomorrow: {failures} downloads failed in a row. "
+                                  "Literotica or Cloudflare is probably refusing requests.", is_error=True)
+            except Exception:
+                pass
+            return
         minutes = get_download_delay()
-        if self._failures_in_a_row:
-            minutes = min(max(minutes, RETRY_DELAYS_MINUTES[0]) * 2 ** self._failures_in_a_row, FAILURE_GAP_CAP_MINUTES)
+        if failures:
+            minutes = min(max(minutes, RETRY_DELAYS_MINUTES[0]) * 2 ** failures, FAILURE_GAP_CAP_MINUTES)
         if not minutes:
             _store_next_download_at(None)
             return
@@ -250,7 +323,7 @@ class DownloadQueueWorker:
         when = datetime.utcnow() + timedelta(minutes=minutes)
         _store_next_download_at(when)
         log_action(f"[DOWNLOAD WORKER] Next download in {minutes:.1f} minutes"
-                   + (f" ({self._failures_in_a_row} failed in a row)" if self._failures_in_a_row else ''))
+                   + (f" ({failures} failed in a row)" if failures else ''))
 
     def _get_daily_cap(self) -> int:
         return get_daily_cap()
@@ -279,7 +352,7 @@ class DownloadQueueWorker:
 
         # Requeue today's rate-limited items if we're now under the cap (e.g. cap was raised)
         daily_cap = self._get_daily_cap()
-        if self._daily_downloads_today() < daily_cap:
+        if not over_daily_cap(self._daily_downloads_today(), daily_cap):
             today_limited = DownloadQueueItem.query.filter(
                 DownloadQueueItem.status == 'rate_limited',
                 DownloadQueueItem.completed_at >= today_start
@@ -310,6 +383,8 @@ class DownloadQueueWorker:
         self._reset_rate_limited_items()
 
         now = datetime.utcnow()
+        if paused_until():  # Too many failures in a row: nothing until tomorrow.
+            return
         planned = next_download_at()
         if planned and planned > now:
             return
@@ -329,7 +404,7 @@ class DownloadQueueWorker:
         item_id = item.id
 
         daily_cap = self._get_daily_cap()
-        if self._daily_downloads_today() >= daily_cap:
+        if over_daily_cap(self._daily_downloads_today(), daily_cap):
             log_action(f"[DOWNLOAD WORKER] Daily cap of {daily_cap} reached — marking pending items as rate_limited")
             pending = DownloadQueueItem.query.filter(
                 DownloadQueueItem.status == 'pending',
