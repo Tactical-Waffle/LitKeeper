@@ -83,7 +83,12 @@
   <p class="text-sm text-gray-700 dark:text-gray-300 leading-relaxed"><span class="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mr-1">AI summary</span><span class="ai-summary-body">{{ summary_ai.summary }}</span></p>
 </div>
 
-<div class="flex items-center gap-0.5 mb-3" id="storyRatingWidget" data-story-id="{{ story.id }}" data-current-rating="{{ story.rating or 0 }}">
+{# Your rating: the stars show once you have rated the story; until then, a Rate button brings them up. #}
+<button type="button" class="rate-story-btn {{ 'hidden' if story.rating }} mb-3 inline-flex items-center gap-1 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-amber-500 dark:hover:text-amber-400"
+        onclick="showRatingStars(this)">
+  <span class="text-sm leading-none">☆</span> Rate this story
+</button>
+<div class="{{ '' if story.rating else 'hidden' }} flex items-center gap-0.5 mb-3" id="storyRatingWidget" data-story-id="{{ story.id }}" data-current-rating="{{ story.rating or 0 }}">
   {% for i in range(1, 6) %}
   <button class="rating-star text-2xl leading-none {{ 'text-amber-400' if story.rating and i <= story.rating else 'text-slate-300 dark:text-slate-600' }} focus:outline-none"
           data-value="{{ i }}"
@@ -126,14 +131,24 @@
   {% if story.word_count %} • {% if story.word_count < 1000 %}{{ story.word_count }} words{% else %}{{ "%.1f"|format(story.word_count / 1000) }}k words{% endif %}{% endif %}
   {% if story.size %} • {{ (story.size / 1024 / 1024)|round(2) }} MB{% endif %}
 </p>
-{% if story.community_score is not none %}
-<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-  <span class="text-amber-500 font-medium">★ {{ "%.2f"|format(story.community_score) }}</span> community score
-  {% if story.views %} • <span title="Views">👁 {% if story.views >= 1000 %}{{ "%.1f"|format(story.views / 1000) }}k{% else %}{{ story.views }}{% endif %}</span>{% endif %}
-  {% if story.favorites %} • <span title="Favorites">♥ {% if story.favorites >= 1000 %}{{ "%.1f"|format(story.favorites / 1000) }}k{% else %}{{ story.favorites }}{% endif %}</span>{% endif %}
-  {% if story.comments %} • <span title="Comments">💬 {{ story.comments }}</span>{% endif %}
-</p>
-{% endif %}
+{% set lit = story.literotica_update or {} %}
+<div class="literotica-stats mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400" data-story-id="{{ story.id }}">
+  <span class="literotica-numbers flex flex-wrap items-center gap-x-3 gap-y-1">
+    {% if story.community_score is not none %}<span title="Community rating on Literotica"><span class="text-amber-500 font-medium">★ {{ "%.2f"|format(story.community_score) }}</span> community</span>{% endif %}
+    {% if story.views is not none %}<span title="{{ '{:,}'.format(story.views) }} views on Literotica">{{ '{:,}'.format(story.views) }} {{ 'view' if story.views == 1 else 'views' }}</span>{% endif %}
+    {% if story.favorites is not none %}<span title="{{ '{:,}'.format(story.favorites) }} favorites on Literotica"><span class="text-rose-400">♥</span> {{ '{:,}'.format(story.favorites) }} {{ 'favorite' if story.favorites == 1 else 'favorites' }}</span>{% endif %}
+    {% if story.comments %}<span title="Comments on Literotica">{{ '{:,}'.format(story.comments) }} {{ 'comment' if story.comments == 1 else 'comments' }}</span>{% endif %}
+  </span>
+  {% if lit.possible %}
+  <button type="button" class="literotica-update-btn font-medium text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-60 disabled:no-underline"
+          data-requires-online onclick="updateFromLiterotica({{ story.id }})" {{ 'disabled' if lit.running or lit.queued }}
+          title="Read the rating, views, favorites, description and tags from Literotica again (queued, separate from downloads)">
+    {{ 'Updating…' if lit.running else ('Waiting to update…' if lit.queued else 'Update from Literotica') }}
+  </button>
+  {% if lit.error and not (lit.running or lit.queued) %}<span class="literotica-update-error text-red-600 dark:text-red-400">{{ lit.error }}</span>{% endif %}
+  {% endif %}
+</div>
+{% if lit.running or lit.queued %}<script>window.pollLiteroticaUpdate && window.pollLiteroticaUpdate({{ story.id }});</script>{% endif %}
 {% endmacro %}
 
 {% macro story_actions_section(story) %}

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from typing import List, Dict, Tuple
 
 
@@ -28,9 +29,17 @@ def get_queue_count() -> int:
 
 
 def _with_summaries(stories: list) -> list:
-    """A story's AI summary, where it has one, is shown in place of the description from Literotica."""
+    """A story's AI summary, where it has one, is shown in place of the description from Literotica.
+    Each story also gets cover_version (when its cover file last changed), for a cover address the browser
+    can keep."""
     from app.services import ai_summary
+    from app.utils import get_cover_directory
+    covers = get_cover_directory()
     for story in stories:
+        try:
+            story['cover_version'] = int(os.path.getmtime(os.path.join(covers, f"{story['id']}_{story['filename_base']}.jpg")))
+        except (OSError, KeyError, TypeError):
+            story['cover_version'] = None
         text = ai_summary.summary_for(story['id'], story['filename_base'])
         if text:
             story['description'] = text
@@ -173,6 +182,8 @@ def get_stories_page(
         'community_score': Story.literotica_score,
         'pages': Story.literotica_page_count,
         'queued': Story.queued_at,
+        'views': Story.literotica_views,
+        'favorites': Story.literotica_favorites,
     }
     order_col = col_map.get(sort_by, Story.created_at)
     if sort_order == 'desc':

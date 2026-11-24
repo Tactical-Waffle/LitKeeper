@@ -248,6 +248,19 @@ def create_app() -> Flask:
         except:
             return ''
 
+    @app.template_filter('compact_number')
+    def compact_number(count: Any) -> str:
+        """1234 → 1.2k, 2500000 → 2.5M (views and favorites)."""
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            return ''
+        if count < 1000:
+            return str(count)
+        if count < 1_000_000:
+            return f'{count / 1000:.1f}'.rstrip('0').rstrip('.') + 'k'
+        return f'{count / 1_000_000:.1f}'.rstrip('0').rstrip('.') + 'M'
+
     @app.template_filter('basename')
     def basename_filter(path: str) -> str:
         if not path:
@@ -689,8 +702,8 @@ def create_app() -> Flask:
         app.format_worker.start()
         atexit.register(app.format_worker.stop)
 
-        from app.services import ai_cover, ai_rewrite, ai_summary
-        for _service in (ai_cover, ai_rewrite, ai_summary):  # AI queues saved before a restart.
+        from app.services import ai_cover, ai_rewrite, ai_summary, metadata_update
+        for _service in (ai_cover, ai_rewrite, ai_summary, metadata_update):  # Queues saved before a restart.
             try:
                 _service.restore(app)
             except Exception as e:

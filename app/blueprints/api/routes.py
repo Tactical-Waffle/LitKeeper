@@ -487,6 +487,7 @@ def get_epub_file(story_id: int) -> ResponseReturnValue:
 # Covers can change (AI covers, regenerated covers) under the same URL, so browsers keep them but check
 # for a newer version each time; unchanged covers answer with a cheap "304 Not Modified".
 _COVER_CACHE_HEADERS = {'Cache-Control': 'no-cache'}
+_COVER_KEEP_HEADERS = {'Cache-Control': 'public, max-age=31536000, immutable'}
 
 
 def _ensure_base_cover(story) -> Optional[str]:
@@ -525,14 +526,19 @@ def _ensure_base_cover(story) -> Optional[str]:
 def get_story_cover(story_id: int) -> ResponseReturnValue:
     from app.models import Story
 
-    story = Story.query.get_or_404(story_id)
+    from app.models import db
+    # Only the two columns the file name needs: the library asks for dozens of covers at once.
+    story = db.session.query(Story.id, Story.filename_base).filter(Story.id == story_id).first() or abort(404)
     cover_path = _ensure_base_cover(story)
     if not cover_path:
         abort(404)
 
     response = send_from_directory(
         os.path.dirname(cover_path), os.path.basename(cover_path), mimetype='image/jpeg')
-    response.headers.update(_COVER_CACHE_HEADERS)
+    # The library's cards ask for ?v=<when the cover file last changed>: a new cover gets a new address, so the
+    # browser can keep each one instead of asking the server again for every cover on every visit (those
+    # requests filled the browser's few connections and held up the story window).
+    response.headers.update(_COVER_KEEP_HEADERS if request.args.get('v') else _COVER_CACHE_HEADERS)
     return response
 
 
@@ -1450,6 +1456,31 @@ def _ai_info(module: str, story) -> dict:
         return {}
 
 
+def _literotica_update_info(story) -> dict:
+    from app.services import metadata_update
+    try:
+        return metadata_update.info(story)
+    except Exception as e:
+        log_error(f"Could not read the Literotica update state of story {story.id}: {e}")
+        return {}
+
+
+@api.route("/story/<int:story_id>/literotica-update", methods=['GET', 'POST'])
+def story_literotica_update(story_id: int) -> ResponseReturnValue:
+    """The story window's Update from Literotica button. GET: the state; POST: queue an update.
+    The reply carries the story's numbers so the window can show them when the update is done."""
+    from app.models import Story
+    from app.services import metadata_update
+    story = Story.query.get_or_404(story_id)
+    if request.method == 'POST':
+        if not metadata_update.can_update(story):
+            return jsonify({'success': False, 'message': 'This story has no Literotica address.'}), 400
+        metadata_update.start(current_app._get_current_object(), story_id)
+    return jsonify({'success': True, **metadata_update.info(story),
+                    'community_score': story.literotica_score, 'views': story.literotica_views,
+                    'favorites': story.literotica_favorites, 'comments': story.literotica_comments})
+
+
 @api.route("/story/<int:story_id>/modal", methods=['GET'])
 def get_story_modal(story_id: int) -> ResponseReturnValue:
     from app.models import Story
@@ -1490,6 +1521,7 @@ def get_story_modal(story_id: int) -> ResponseReturnValue:
         'ai_cover': _ai_cover_info(story),
         'ai_rewrite': _ai_info('ai_rewrite', story),
         'ai_summary': _ai_info('ai_summary', story),
+        'literotica_update': _literotica_update_info(story),
         'gathered_at': _time.perf_counter(),
         'reading_progress': {
             'percentage': story.reading_progress.percentage,
@@ -2632,7 +2664,8 @@ def ai_summary_story(story_id: int) -> ResponseReturnValue:
     return jsonify({"success": True, **ai_summary.info(story)})
 
 
-BULK_ACTIONS = ('delete', 'regenerate_covers', 'ai_covers', 'ai_rewrite', 'ai_summaries', 'auto_update_on', 'auto_update_off')
+BULK_ACTIONS = ('delete', 'regenerate_covers', 'ai_covers', 'ai_rewrite', 'ai_summaries', 'update_metadata',
+                'auto_update_on', 'auto_update_off')
 BULK_MAX_STORIES = 10000  # Select All can pick the whole library.
 
 
@@ -2659,6 +2692,15 @@ def bulk_story_action() -> ResponseReturnValue:
         from app.services import ai_cover
         if not ai_cover.settings()['api_key']:
             return jsonify({"success": False, "message": "Add an OpenRouter API key in Settings → AI Covers first."}), 400
+
+    if action == 'update_metadata':
+        # Queued all at once; the updates run in the background, paced like downloads.
+        from app.services import metadata_update
+        possible = [s.id for s in Story.query.filter(Story.id.in_(ids)).all() if metadata_update.can_update(s)]
+        added = metadata_update.start_many(current_app._get_current_object(), possible)
+        skipped = len(ids) - len(possible)
+        log_action(f"Bulk update_metadata: {added} queued" + (f", {skipped} without a Literotica address" if skipped else ''))
+        return jsonify({"success": True, "done": len(possible), "failed": 0, "skipped": skipped, "action": action})
 
     stories = {s.id: s for s in Story.query.filter(Story.id.in_(ids)).all()}
     done, failed, skipped = 0, 0, 0

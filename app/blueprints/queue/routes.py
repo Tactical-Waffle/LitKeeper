@@ -79,7 +79,7 @@ def index() -> ResponseReturnValue:
                            failed=DownloadQueueItem.query.filter_by(status='failed').count(),
                            rate_limited=rate_limited_count,
                            queue_list=_list_values(all_items),
-                           ai=_ai_queue())
+                           ai=_ai_queue(), metadata=_metadata_queue())
 
 @queue.route('/api/items')
 def get_queue_items() -> ResponseReturnValue:
@@ -240,11 +240,34 @@ def _ai_queue() -> dict:
     return result
 
 
+METADATA_SHOWN = 30  # Waiting Literotica updates listed by name; the rest are counted.
+
+
+def _metadata_queue() -> dict:
+    """Updates from Literotica (ratings, views, favorites): their own queue, separate from downloads."""
+    from app.models import Story
+    from app.services import metadata_update
+    state = metadata_update.overview()
+    shown_ids = state['waiting'][:METADATA_SHOWN]
+    ids = set(shown_ids) | ({state['running']} if state['running'] else set())
+    titles = dict(Story.query.with_entities(Story.id, Story.title).filter(Story.id.in_(ids)).all()) if ids else {}
+
+    def named(story_id):
+        return {'story_id': story_id, 'title': titles.get(story_id) or f'Story {story_id} (deleted)'}
+    return {'running': named(state['running']) if state['running'] else None,
+            'waiting': [named(i) for i in shown_ids],
+            'more': max(0, len(state['waiting']) - METADATA_SHOWN),
+            'waiting_count': len(state['waiting']),
+            'paused_for': state['paused_for'],
+            'failed': len(state['errors']),
+            'shown': bool(state['running'] or state['waiting'])}
+
+
 @queue.route('/partials/ai-covers')
 def ai_covers_partial() -> ResponseReturnValue:
     """HTMX partial: the AI work (covers, rewrites, summaries)."""
     try:
-        return render_template('queue/partials/ai_covers.html', ai=_ai_queue())
+        return render_template('queue/partials/ai_covers.html', ai=_ai_queue(), metadata=_metadata_queue())
     except Exception as e:
         log_error(f"Error rendering the AI queue: {str(e)}")
         return '<div class="text-red-600 dark:text-red-400 text-sm">Error loading the AI queue</div>', 500
@@ -262,9 +285,9 @@ def reorder() -> ResponseReturnValue:
         return jsonify({'success': False, 'message': 'The order must be a list of numbers.'}), 400
     if kind == 'download':
         _reorder_downloads(ids)
-    elif kind in ('cover', 'rewrite', 'summary'):
+    elif kind in ('cover', 'rewrite', 'summary', 'metadata'):
         from importlib import import_module
-        import_module(f"app.services.{ {'cover': 'ai_cover', 'rewrite': 'ai_rewrite', 'summary': 'ai_summary'}[kind] }").reorder(ids)
+        import_module(f"app.services.{ {'cover': 'ai_cover', 'rewrite': 'ai_rewrite', 'summary': 'ai_summary', 'metadata': 'metadata_update'}[kind] }").reorder(ids)
     else:
         return jsonify({'success': False, 'message': 'Unknown queue.'}), 400
     log_action(f"[Queue] New order for waiting {kind} jobs: {', '.join(map(str, ids))}")
@@ -287,13 +310,22 @@ def _reorder_downloads(ids: list) -> None:
 @queue.route('/api/ai/<kind>/<int:story_id>', methods=['DELETE'])
 def cancel_ai_job(kind: str, story_id: int) -> ResponseReturnValue:
     """Take a waiting AI Rewrite or AI summary out of the queue."""
-    from app.services import ai_rewrite, ai_summary
-    service = {'rewrite': ai_rewrite, 'summary': ai_summary}.get(kind)
+    from app.services import ai_rewrite, ai_summary, metadata_update
+    service = {'rewrite': ai_rewrite, 'summary': ai_summary, 'metadata': metadata_update}.get(kind)
     if not service:
         return jsonify({'success': False, 'message': 'Unknown queue.'}), 404
     if service.remove(story_id):
         return jsonify({'success': True})
     return jsonify({'success': False, 'message': 'That job is not waiting any more.'}), 409
+
+
+@queue.route('/api/metadata', methods=['DELETE'])
+def clear_metadata_updates() -> ResponseReturnValue:
+    """Take every waiting update from Literotica out of the queue (the one running finishes)."""
+    from app.services import metadata_update
+    count = metadata_update.clear()
+    log_action(f"[Queue] Took {count} waiting Literotica {'update' if count == 1 else 'updates'} out")
+    return jsonify({'success': True, 'removed': count})
 
 
 @queue.route('/api/ai-covers/<int:story_id>', methods=['DELETE'])

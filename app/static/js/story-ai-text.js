@@ -227,3 +227,77 @@
     if (container?.querySelector('[data-placeholder]')) container.innerHTML = '';
   });
 })();
+
+// Update from Literotica in the story window: queue the update, then check every few seconds until it is done
+// and show the new numbers. The update has its own queue, separate from downloads (see the Queue page).
+(function () {
+  let timer = null;
+
+  function draw(storyId, info) {
+    document.querySelectorAll(`.literotica-stats[data-story-id="${storyId}"]`).forEach(box => {
+      const button = box.querySelector('.literotica-update-btn');
+      if (button) {
+        button.textContent = info.running ? 'Updating…' : info.queued ? 'Waiting to update…' : 'Update from Literotica';
+        button.disabled = !!(info.running || info.queued);
+      }
+      box.querySelector('.literotica-update-error')?.remove();
+      if (info.error && !info.running && !info.queued) {
+        const error = document.createElement('span');
+        error.className = 'literotica-update-error text-red-600 dark:text-red-400';
+        error.textContent = info.error;
+        box.appendChild(error);
+      }
+      const numbers = box.querySelector('.literotica-numbers');
+      if (!numbers || info.running || info.queued) return;
+      const parts = [];
+      const add = (text, title, prefix, prefixClass) => {
+        const span = document.createElement('span');
+        span.title = title;
+        if (prefix) {
+          const mark = document.createElement('span');
+          mark.className = prefixClass;
+          mark.textContent = prefix;
+          span.append(mark, ' ');
+        }
+        span.append(text);
+        parts.push(span);
+      };
+      const n = v => Number(v).toLocaleString('en-US');
+      if (info.community_score != null) add(`${Number(info.community_score).toFixed(2)} community`, 'Community rating on Literotica', '★', 'text-amber-500 font-medium');
+      if (info.views != null) add(`${n(info.views)} ${info.views === 1 ? 'view' : 'views'}`, `${n(info.views)} views on Literotica`);
+      if (info.favorites != null) add(`${n(info.favorites)} ${info.favorites === 1 ? 'favorite' : 'favorites'}`, `${n(info.favorites)} favorites on Literotica`, '♥', 'text-rose-400');
+      if (info.comments) add(`${n(info.comments)} ${info.comments === 1 ? 'comment' : 'comments'}`, 'Comments on Literotica');
+      numbers.replaceChildren(...parts);
+    });
+  }
+
+  window.pollLiteroticaUpdate = function (storyId) {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      if (!document.querySelector(`.literotica-stats[data-story-id="${storyId}"]`)) return;  // Window closed.
+      try {
+        const info = await (await fetch(`/api/story/${storyId}/literotica-update`)).json();
+        draw(storyId, info);
+        if (info.running || info.queued) window.pollLiteroticaUpdate(storyId);
+        else if (typeof showToast === 'function') showToast(info.error ? 'The update from Literotica failed' : 'Updated from Literotica', info.error ? 'error' : 'success');
+      } catch {
+        window.pollLiteroticaUpdate(storyId);
+      }
+    }, 3000);
+  };
+
+  window.updateFromLiterotica = async function (storyId) {
+    let info;
+    try {
+      info = await (await fetch(`/api/story/${storyId}/literotica-update`, { method: 'POST' })).json();
+    } catch {
+      info = { success: false, message: 'Could not reach LitKeeper' };
+    }
+    if (!info.success) {
+      if (typeof showToast === 'function') showToast(info.message || 'The update could not be queued', 'error');
+      return;
+    }
+    draw(storyId, info);
+    window.pollLiteroticaUpdate(storyId);
+  };
+})();

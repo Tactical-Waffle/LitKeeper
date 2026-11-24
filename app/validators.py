@@ -156,7 +156,7 @@ class LibraryFilterRequest(BaseModel):
     """Validation schema for library filter requests."""
     search: str = ""
     category: str = "all"
-    sort_by: Literal["name", "date", "author", "category", "length", "rating", "last_opened", "community_score", "pages", "queued"] = "date"
+    sort_by: Literal["name", "date", "author", "category", "length", "rating", "last_opened", "community_score", "pages", "queued", "views", "favorites"] = "date"
     sort_order: Literal["asc", "desc"] = "desc"
     queue_only: bool = False
     min_community_score: float = 0.0

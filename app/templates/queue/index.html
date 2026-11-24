@@ -156,6 +156,17 @@
     htmx.ajax('GET', '/queue/partials/ai-covers', { target: '#aiCoverQueue', swap: 'innerHTML' });
   }
 
+  async function clearMetadataUpdates(count) {
+    if (!confirm(`Take all ${count} waiting updates from Literotica out of the queue?`)) return;
+    try {
+      const data = await (await fetch('/queue/api/metadata', { method: 'DELETE' })).json();
+      window.toast?.show(`Took ${data.removed} ${data.removed === 1 ? 'update' : 'updates'} out`, 'success');
+    } catch {
+      window.toast?.show('Request failed', 'error');
+    }
+    htmx.ajax('GET', '/queue/partials/ai-covers', { target: '#aiCoverQueue', swap: 'innerHTML' });
+  }
+
   async function cancelItem(itemId) {
     try {
       const res = await fetch(`/queue/api/items/${itemId}`, { method: 'DELETE' });

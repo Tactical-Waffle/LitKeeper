@@ -83,3 +83,46 @@
   </div>
 </div>
 {% endif %}
+
+{# Updates from Literotica (ratings, views, favorites): their own queue, separate from the downloads. #}
+{% if metadata and metadata.shown %}
+<div class="mb-4" data-metadata-queue>
+  <div class="flex items-center justify-between gap-3 mb-1.5">
+    <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Updates from Literotica</h3>
+    <div class="flex items-center gap-3">
+      <p class="text-xs text-gray-500 dark:text-gray-400">
+        {{ metadata.waiting_count }} waiting{% if metadata.failed %} · {{ metadata.failed }} failed{% endif %} · paced like downloads
+      </p>
+      {% if metadata.waiting_count %}
+      <button onclick="clearMetadataUpdates({{ metadata.waiting_count }})" class="text-xs font-medium text-red-600 dark:text-red-400 hover:underline">Take all out</button>
+      {% endif %}
+    </div>
+  </div>
+  <div class="queue-list rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white dark:bg-gray-800 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
+    {% if metadata.running %}
+    <div class="flex items-center gap-2.5 px-3 py-1.5" data-metadata-state="running">
+      {{ spinner() }}
+      <p class="min-w-0 flex-1 text-sm truncate"><span class="font-medium text-gray-900 dark:text-white">{{ metadata.running.title }}</span>
+        <span class="text-xs text-amber-700 dark:text-amber-400"> · reading Literotica</span></p>
+    </div>
+    {% elif metadata.paused_for %}
+    <div class="px-3 py-1.5 text-xs text-orange-700 dark:text-orange-400">Literotica refused the last request; trying again in {{ metadata.paused_for }} s.</div>
+    {% endif %}
+    {% if metadata.waiting %}
+    <div data-sortable="metadata" class="divide-y divide-slate-100 dark:divide-slate-700/50">
+      {% for item in metadata.waiting %}
+      <div class="queue-row flex items-center gap-2.5 px-3 py-1.5" data-sort-id="{{ item.story_id }}">
+        {% if metadata.waiting|length > 1 %}{{ handle(item.title) }}{% else %}<span class="flex-shrink-0 w-2 h-2 ml-1 mr-1 rounded-full bg-blue-500"></span>{% endif %}
+        <p class="min-w-0 flex-1 text-sm truncate"><span class="font-medium text-gray-900 dark:text-white">{{ item.title }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400"> · waiting</span></p>
+        {{ remove_button("cancelAiJob('metadata', " ~ item.story_id ~ ")", 'Take it out of the queue') }}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if metadata.more %}
+    <div class="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400">and {{ metadata.more }} more</div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

@@ -840,6 +840,8 @@ function toggleAddStories() {
               <option value="pages">Page Count</option>
               <option value="rating">Rating</option>
               <option value="community_score">Community Score</option>
+              <option value="views">Views</option>
+              <option value="favorites">Favorites</option>
               <option value="last_opened">Last Opened</option>
               <option value="queued">Date Queued</option>
             </select>
@@ -891,9 +893,9 @@ function toggleAddStories() {
              class="library-dropdown-panel invisible opacity-0 pointer-events-none absolute z-20 mt-2 right-0 w-56 p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-gray-800 shadow-lg space-y-1">
           <p class="text-xs font-medium text-gray-500 dark:text-gray-400 px-1 pb-1">Layout</p>
           <div id="layoutOptions" class="grid grid-cols-3 gap-1 p-1 mb-2 rounded-lg bg-slate-100 dark:bg-gray-900" role="radiogroup" aria-label="Library layout">
-            <button type="button" data-layout="covers" onclick="setLibraryLayout('covers')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium">Covers</button>
             <button type="button" data-layout="list" onclick="setLibraryLayout('list')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium">List</button>
             <button type="button" data-layout="detail" onclick="setLibraryLayout('detail')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium">Detail</button>
+            <button type="button" data-layout="covers" onclick="setLibraryLayout('covers')" role="radio" class="cover-size-option h-8 rounded-md text-xs font-medium">Covers</button>
           </div>
           <p class="text-xs font-medium text-gray-500 dark:text-gray-400 px-1 pb-1">Cover size</p>
           <div id="coverSizeOptions" class="grid grid-cols-4 gap-1 p-1 mb-2 rounded-lg bg-slate-100 dark:bg-gray-900" role="radiogroup" aria-label="Cover size">
@@ -912,6 +914,16 @@ function toggleAddStories() {
             <input type="checkbox" id="viewCommunityScore" onchange="setLibraryViewOption('community-score', this.checked)"
                    class="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary">
             <span class="text-sm text-gray-700 dark:text-gray-200">Community rating</span>
+          </label>
+          <label class="flex items-center gap-2 px-1 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-gray-700 cursor-pointer">
+            <input type="checkbox" id="viewViews" onchange="setLibraryViewOption('views', this.checked)"
+                   class="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary">
+            <span class="text-sm text-gray-700 dark:text-gray-200">Views</span>
+          </label>
+          <label class="flex items-center gap-2 px-1 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-gray-700 cursor-pointer">
+            <input type="checkbox" id="viewFavorites" onchange="setLibraryViewOption('favorites', this.checked)"
+                   class="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary">
+            <span class="text-sm text-gray-700 dark:text-gray-200">Favorites</span>
           </label>
           <label class="flex items-center gap-2 px-1 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-gray-700 cursor-pointer">
             <input type="checkbox" id="viewCategory" onchange="setLibraryViewOption('category', this.checked)"
@@ -981,6 +993,7 @@ function toggleAddStories() {
       <button type="button" data-needs-selection onclick="bulkAction('ai_rewrite', this)" class="selection-action">AI Rewrite</button>
       <button type="button" data-needs-selection onclick="bulkAction('ai_summaries', this)" class="selection-action">Summarize</button>
       {% endif %}
+      <button type="button" data-needs-selection onclick="bulkAction('update_metadata', this)" class="selection-action" title="Ratings, views, favorites, description and tags, read again from Literotica (queued, separate from downloads)">Update from Literotica</button>
       <button type="button" data-needs-selection onclick="bulkAction('auto_update_on', this)" class="selection-action">Auto-Update On</button>
       <button type="button" data-needs-selection onclick="bulkAction('auto_update_off', this)" class="selection-action">Auto-Update Off</button>
       <button type="button" data-needs-selection onclick="bulkAction('delete', this)" class="selection-action selection-action-danger">Delete</button>
@@ -1049,7 +1062,10 @@ function toggleAddStories() {
 #library.show-categories .story-category-label { display: block !important; }
 #library.show-word-count .story-word-count-label { display: block !important; }
 #library.show-user-rating .card-user-rating { display: inline-flex !important; }
+#library.show-user-rating .card-user-rating.card-unrated { display: none !important; }
 #library.show-community-score .card-community-score { display: inline-flex !important; }
+#library.show-views .card-views { display: inline-flex !important; }
+#library.show-favorites .card-favorites { display: inline-flex !important; }
 /* Layouts: Covers (the grid), List (one line per story) and Detail (cover, description and tags). */
 .story-card .card-info { display: none; }
 #library[data-layout="list"] .library-grid,
@@ -1217,6 +1233,8 @@ applyLibraryLayout();
 const LIBRARY_VIEW_OPTIONS = {
   'user-rating': { key: 'library_view_user_rating', cls: 'show-user-rating', checkboxId: 'viewUserRating', default: true },
   'community-score': { key: 'library_view_community_score', cls: 'show-community-score', checkboxId: 'viewCommunityScore', default: false },
+  'views': { key: 'library_view_views', cls: 'show-views', checkboxId: 'viewViews', default: false },
+  'favorites': { key: 'library_view_favorites', cls: 'show-favorites', checkboxId: 'viewFavorites', default: false },
   'category': { key: 'library_view_category', cls: 'show-categories', checkboxId: 'viewCategory', default: false },
   // Replaced "Page length"; a saved choice for that carries over.
   'word-count': { key: 'library_view_word_count', cls: 'show-word-count', checkboxId: 'viewWordCount', default: false, oldKey: 'library_view_page_length' },
@@ -1387,6 +1405,7 @@ var BULK_WORDS = {
   ai_covers: { busy: 'Starting...', done: n => `Queued ${n} AI ${n === 1 ? 'cover' : 'covers'}` },
   ai_rewrite: { busy: 'Starting...', done: n => `Queued ${n} ${n === 1 ? 'story' : 'stories'} for AI Rewrite` },
   ai_summaries: { busy: 'Starting...', done: n => `Queued ${n} AI ${n === 1 ? 'summary' : 'summaries'}` },
+  update_metadata: { busy: 'Queueing...', done: n => `Queued ${n} ${n === 1 ? 'story' : 'stories'} to update from Literotica (see the Queue page)` },
   auto_update_on: { busy: 'Saving...', done: n => `Auto-update turned on for ${n} ${n === 1 ? 'story' : 'stories'}` },
   auto_update_off: { busy: 'Saving...', done: n => `Auto-update turned off for ${n} ${n === 1 ? 'story' : 'stories'}` },
 };
@@ -1402,6 +1421,8 @@ async function bulkAction(action, button) {
       !confirm(`Make AI covers for ${n} ${word}? Each one costs a few cents of OpenRouter credit.`)) return;
   if (action === 'ai_rewrite' &&
       !confirm(`Rewrite ${n} ${word} with AI? It costs OpenRouter credit for every part not yet rewritten, and runs one story at a time. The original text is kept.`)) return;
+  if (action === 'update_metadata' && n > 20 &&
+      !confirm(`Update ${n} ${word} from Literotica? They are read one at a time, at the download pace (about 8 a minute), separately from downloads.`)) return;
   if (action === 'ai_summaries' &&
       !confirm(`Write AI summaries for ${n} ${word}? Stories that already have one are skipped. Each costs a small fraction of a cent.`)) return;
 
@@ -1424,7 +1445,7 @@ async function bulkAction(action, button) {
   }
 
   if (data.message && !data.done) { showToast(data.message, 'error'); return; }
-  const doneText = BULK_WORDS[action].done(data.done || 0) + (data.skipped ? ` (${data.skipped} skipped: already done)` : '');
+  const doneText = BULK_WORDS[action].done(data.done || 0) + (data.skipped ? ` (${data.skipped} skipped: ${action === 'update_metadata' ? 'not from Literotica' : 'already done'})` : '');
   showToast(data.failed ? `${doneText}; ${data.failed} failed (see the main log)` : doneText, data.failed ? 'error' : 'success');
 
   if (action === 'delete') {

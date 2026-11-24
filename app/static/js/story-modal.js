@@ -111,13 +111,24 @@ function updateRatingWidget(rating) {
     });
     const clearBtn = widget.querySelector('.clear-rating-btn');
     if (clearBtn) clearBtn.classList.toggle('hidden', !rating);
+    // Cleared: the stars go away again until the next rating.
+    if (!rating) {
+      widget.classList.add('hidden');
+      widget.parentElement?.querySelector('.rate-story-btn')?.classList.remove('hidden');
+    }
   });
 }
+
+window.showRatingStars = function(button) {
+  button.classList.add('hidden');
+  button.parentElement?.querySelector('#storyRatingWidget')?.classList.remove('hidden');
+};
 
 function updateLibraryCardStars(storyId, rating) {
   document.querySelectorAll(`[data-story-id="${storyId}"]`).forEach(card => {
     const container = card.querySelector('.card-rating-container');
     if (!container) return;
+    container.classList.toggle('card-unrated', !rating);
 
     const stars = container.querySelectorAll('.card-rating-star');
     stars.forEach((star, index) => {
