@@ -1,5 +1,7 @@
-{# The download queue and its history, one compact line per item (two when there is progress or a problem). #}
-<div class="queue-list rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white dark:bg-gray-800 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
+{# The download queue and its history, one compact line per item (two when there is progress or a problem):
+   downloading now, then the waiting ones in the order they will run (drag to change it), then the history. #}
+{% set waiting_count = items|selectattr('status', 'equalto', 'pending')|list|length %}
+<div data-sortable="download" class="queue-list rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white dark:bg-gray-800 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
 
   {% if next_download_in %}
   <p id="nextDownloadNote" class="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60">
@@ -9,8 +11,15 @@
   {% endif %}
 
   {% for item in items %}
-  <div class="queue-row flex items-center gap-2.5 px-3 py-1.5" data-status="{{ item.status }}">
+  <div class="queue-row flex items-center gap-2.5 px-3 py-1.5" data-status="{{ item.status }}"{% if item.status == 'pending' %} data-sort-id="{{ item.id }}"{% endif %}>
 
+    {% if item.status == 'pending' and waiting_count > 1 %}
+    <button type="button" class="queue-handle flex-shrink-0 flex items-center gap-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300" data-drag-handle
+      aria-label="Move {{ item.title or item.url }}: drag, or use the up and down arrow keys" title="Drag to change the order">
+      <svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="5" cy="3" r="1.4"/><circle cx="11" cy="3" r="1.4"/><circle cx="5" cy="8" r="1.4"/><circle cx="11" cy="8" r="1.4"/><circle cx="5" cy="13" r="1.4"/><circle cx="11" cy="13" r="1.4"/></svg>
+      <span class="text-[11px] font-semibold tabular-nums" data-queue-number></span>
+    </button>
+    {% endif %}
     <span class="flex-shrink-0 w-4 h-4 flex items-center justify-center" title="{{ item.status | replace('_', ' ') | capitalize }}">
       {% if item.status == 'processing' %}
       <span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-amber-200 dark:border-amber-800 border-t-amber-600 dark:border-t-amber-400"></span>

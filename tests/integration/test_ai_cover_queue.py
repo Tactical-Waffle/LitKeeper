@@ -110,10 +110,10 @@ class TestAiCoverQueue:
         _notes(app, stories[3], {'error': 'The image model refused.', 'failed': ai_cover._now()})
         html = client.get('/queue/partials/ai-covers').get_data(as_text=True)
         assert 'Queue Story 0' in html and 'Describing the cover' in html
-        assert 'data-ai-cover-state="waiting"' in html and f'cancelAiCover({stories[1]})' in html
-        assert 'Done · $0.042 · just now' in html
-        assert 'The image model refused.' in html
-        assert '1 in progress · 1 waiting · 3 at a time' in html
+        assert f'data-sort-id="{stories[1]}"' in html and f'cancelAiCover({stories[1]})' in html
+        assert 'Queue Story 2' not in html  # A finished cover leaves the list.
+        assert 'The image model refused.' in html  # A failed one stays for a day.
+        assert '1 running · 1 waiting' in html
         page = client.get('/queue/').get_data(as_text=True)
         assert 'id="aiCoverQueue"' in page and 'Queue Story 0' in page
 
@@ -123,11 +123,13 @@ class TestAiCoverQueue:
             html = client.get('/queue/partials/ai-covers').get_data(as_text=True)
         assert 'AI Covers' not in html
 
-    def test_empty_but_set_up(self, client: FlaskClient, covers, queue_state) -> None:
+    def test_nothing_shown_when_nothing_to_do(self, app: Flask, client: FlaskClient, stories, covers, queue_state) -> None:
         queue_state()
+        _notes(app, stories[2], {'made': ai_cover._now(), 'cost': 0.042})
+        _notes(app, stories[3], {'error': 'Refused long ago.', 'failed': '2026-01-01T00:00:00+00:00'})
         with patch('app.services.ai_cover.settings', return_value={'api_key': 'sk-test'}):
             html = client.get('/queue/partials/ai-covers').get_data(as_text=True)
-        assert 'No AI covers yet' in html
+        assert not html.strip()  # Finished covers and failures older than a day are not shown.
 
     def test_worker_records_times_and_failures(self, app: Flask, stories, covers, queue_state) -> None:
         queue_state()
@@ -175,7 +177,7 @@ class TestSeveralAtOnce:
             with app.app_context():
                 states = [ai_cover.start(app, i, limit=limit) for i in story_ids]
             deadline = time.time() + 5
-            while time.time() < deadline and len(ai_cover._active) < min(limit, len(story_ids)):
+            while time.time() < deadline and seen['now'] < min(limit, len(story_ids)):
                 time.sleep(0.02)
             snapshot = {i: dict(a) for i, a in ai_cover._active.items()}
             waiting = list(ai_cover._queue)

@@ -375,6 +375,22 @@ def restore(app) -> None:
         log_action(f'Restored {len(items)} AI Rewrite {"job" if len(items) == 1 else "jobs"} after a restart')
 
 
+def reorder(story_ids: list) -> None:
+    """The Queue page's drag and drop: put the waiting stories in this order."""
+    with _lock:
+        wanted = [i for i in story_ids if i in _queue]
+        rest = [i for i in _queue if i not in wanted]
+        _queue.clear()
+        _queue.extend(wanted + rest)
+        _persist()
+
+
+def overview() -> dict:
+    """The Queue page: the story being worked on and the waiting ones, in order."""
+    with _lock:
+        return {'running': _running.get('story_id'), 'waiting': list(_queue)}
+
+
 def remove(story_id: int) -> bool:
     with _lock:
         if story_id not in _queue:

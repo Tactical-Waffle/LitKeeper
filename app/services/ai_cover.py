@@ -678,6 +678,7 @@ def cancel(story_id: int) -> bool:
             return False
         _queue.remove(story_id)
         _queued_at.pop(story_id, None)
+        _persist()
     log_action(f'AI cover for story {story_id} cancelled before it started')
     return True
 
@@ -706,6 +707,40 @@ def recent_results(limit: int = 15) -> list[dict]:
                         'error': notes.get('error', ''), 'image_model': notes.get('image_model', '')})
     results.sort(key=lambda r: r['when'], reverse=True)
     return results[:limit]
+
+
+def _persist() -> None:
+    """Save the covers being made and the waiting ones, in order (call with _lock held), so a restart of the
+    server (or of its worker process, which happens after many requests) does not lose them."""
+    from . import ai_queues
+    ai_queues.save('cover', [[i, 'cover'] for i in list(_active) + list(_queue)])
+
+
+def restore(app) -> None:
+    """Queue the covers saved before the last restart again: the ones being made first, then the waiting ones."""
+    from . import ai_queues
+    from app.models import Story, db
+    with app.app_context():
+        items = [i for i in ai_queues.load('cover') if db.session.get(Story, i[0])]
+        limit = parallel_limit()
+    for story_id, _ in items:
+        try:
+            start(app, story_id, limit)
+        except ValueError:
+            pass
+    if items:
+        log_action(f'Restored {len(items)} AI {"cover" if len(items) == 1 else "covers"} after a restart')
+
+
+def reorder(story_ids: list) -> None:
+    """The Queue page's drag and drop: put the waiting covers in this order (ones not named keep their place
+    after them)."""
+    with _lock:
+        wanted = [i for i in story_ids if i in _queue]
+        rest = [i for i in _queue if i not in wanted]
+        _queue.clear()
+        _queue.extend(wanted + rest)
+        _persist()
 
 
 def queue_overview() -> dict:
@@ -763,6 +798,7 @@ def start(app, story_id: int, limit: Optional[int] = None) -> str:
             return 'queued'
         _queue.append(story_id)
         _queued_at[story_id] = _now()
+        _persist()
         if _workers >= limit:
             return 'queued'
         _workers += 1
@@ -809,6 +845,7 @@ def _work(app) -> None:
             story_id = _queue.popleft()
             _queued_at.pop(story_id, None)
             _active[story_id] = {'progress': 'Starting', 'started': _now()}
+            _persist()
         _current.story_id = story_id
         try:
             with app.app_context():
@@ -831,3 +868,4 @@ def _work(app) -> None:
             _current.story_id = None
             with _lock:
                 _active.pop(story_id, None)
+                _persist()

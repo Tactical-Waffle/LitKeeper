@@ -1,65 +1,85 @@
-{# The AI cover queue: the one being made, the ones waiting (in order), and recent results. #}
-{% if ai.configured or ai.running or ai.waiting or ai.recent %}
-<div class="mb-4">
+{# AI work: covers, rewrites and summaries. Each kind runs on its own, beside the downloads (it never waits for
+   them). What is running comes first, then each kind's waiting stories in order (drag to change it). Finished
+   covers leave the list; one that failed stays for a day. #}
+{% macro kind_badge(kind) -%}
+<span class="flex-shrink-0 px-1 rounded text-[10px] font-medium {{ {'Cover': 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300', 'Rewrite': 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300', 'Summary': 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'}[kind] }}">{{ kind }}</span>
+{%- endmacro %}
+{% macro handle(title) -%}
+<button type="button" class="queue-handle flex-shrink-0 flex items-center gap-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300" data-drag-handle
+  aria-label="Move {{ title }}: drag, or use the up and down arrow keys" title="Drag to change the order">
+  <svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="5" cy="3" r="1.4"/><circle cx="11" cy="3" r="1.4"/><circle cx="5" cy="8" r="1.4"/><circle cx="11" cy="8" r="1.4"/><circle cx="5" cy="13" r="1.4"/><circle cx="11" cy="13" r="1.4"/></svg>
+  <span class="text-[11px] font-semibold tabular-nums" data-queue-number></span>
+</button>
+{%- endmacro %}
+{% macro remove_button(onclick, title) -%}
+<button onclick="{{ onclick }}" title="{{ title }}"
+  class="flex-shrink-0 p-0.5 rounded text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+</button>
+{%- endmacro %}
+{% macro spinner() -%}
+<span class="flex-shrink-0 animate-spin rounded-full h-3.5 w-3.5 border-2 border-amber-200 dark:border-amber-800 border-t-amber-600 dark:border-t-amber-400"></span>
+{%- endmacro %}
+{% if ai.shown %}
+{% set waiting_total = ai.covers.waiting|length + ai.rewrite.waiting|length + ai.summary.waiting|length %}
+<div class="mb-4" data-ai-busy="{{ 'true' if ai.busy else 'false' }}">
   <div class="flex items-center justify-between gap-3 mb-1.5">
-    <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">AI Covers</h3>
+    <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">AI</h3>
     <p class="text-xs text-gray-500 dark:text-gray-400">
-      {% if ai.running %}{{ ai.running|length }} in progress{% else %}Nothing in progress{% endif %} · {{ ai.waiting|length }} waiting{% if ai.running or ai.waiting %} · {{ ai.parallel }} at a time{% endif %}
+      {% set running_total = ai.covers.running|length + (1 if ai.rewrite.running else 0) + (1 if ai.summary.running else 0) %}
+      {{ running_total }} running · {{ waiting_total }} waiting · runs beside downloads
     </p>
   </div>
 
-  <div class="rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white dark:bg-gray-800 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
-    {% for item in ai.running %}
+  <div class="queue-list rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white dark:bg-gray-800 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
+    {% for item in ai.covers.running %}
     <div class="flex items-center gap-2.5 px-3 py-1.5" data-ai-cover-state="running">
-      <div class="flex-shrink-0 animate-spin rounded-full h-3.5 w-3.5 border-2 border-amber-200 dark:border-amber-800 border-t-amber-600 dark:border-t-amber-400"></div>
-      <div class="min-w-0 flex-1">
-        <p class="font-medium text-gray-900 dark:text-white truncate text-sm">{{ item.title }}</p>
-        <p class="text-xs text-amber-700 dark:text-amber-400 truncate">{{ item.progress or 'Working' }}{% if item.ago %} <span class="text-gray-500 dark:text-gray-400">· started {{ item.ago }}</span>{% endif %}</p>
-      </div>
+      {{ spinner() }}{{ kind_badge('Cover') }}
+      <p class="min-w-0 flex-1 text-sm truncate"><span class="font-medium text-gray-900 dark:text-white">{{ item.title }}</span>
+        <span class="text-xs text-amber-700 dark:text-amber-400"> · {{ item.progress or 'Working' }}</span></p>
     </div>
     {% endfor %}
-
-    {% for item in ai.waiting %}
-    <div class="flex items-center gap-2.5 px-3 py-1.5" data-ai-cover-state="waiting">
-      <span class="flex-shrink-0 w-4 h-4 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-[11px] font-semibold flex items-center justify-center">{{ loop.index }}</span>
-      <div class="min-w-0 flex-1">
-        <p class="font-medium text-gray-900 dark:text-white truncate text-sm">{{ item.title }}</p>
-        <p class="text-xs text-gray-500 dark:text-gray-400">Waiting{% if item.ago %} · added {{ item.ago }}{% endif %}</p>
-      </div>
-      <button onclick="cancelAiCover({{ item.story_id }})" title="Don't make this cover"
-        class="p-1 rounded-md text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-        </svg>
-      </button>
+    {% if ai.rewrite.running %}
+    <div class="flex items-center gap-2.5 px-3 py-1.5" data-ai-rewrite-state="running">
+      {{ spinner() }}{{ kind_badge('Rewrite') }}
+      <p class="min-w-0 flex-1 text-sm truncate"><span class="font-medium text-gray-900 dark:text-white">{{ ai.rewrite.running.title }}</span>
+        <span class="text-xs text-amber-700 dark:text-amber-400"> · {{ ai.rewrite.running.progress }}</span></p>
     </div>
-    {% endfor %}
-
-    {% for item in ai.recent %}
-    <div class="flex items-center gap-2.5 px-3 py-1.5" data-ai-cover-state="{{ 'done' if item.ok else 'failed' }}">
-      {% if item.ok %}
-      <svg class="flex-shrink-0 w-4 h-4 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 24 24">
-        <path fill-rule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z" clip-rule="evenodd"/>
-      </svg>
-      {% else %}
-      <svg class="flex-shrink-0 w-4 h-4 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 24 24">
-        <path fill-rule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm-1.72 6.97a.75.75 0 10-1.06 1.06L10.94 12l-1.72 1.72a.75.75 0 101.06 1.06L12 13.06l1.72 1.72a.75.75 0 101.06-1.06L13.06 12l1.72-1.72a.75.75 0 10-1.06-1.06L12 10.94l-1.72-1.72z" clip-rule="evenodd"/>
-      </svg>
-      {% endif %}
-      <div class="min-w-0 flex-1">
-        <p class="font-medium text-gray-900 dark:text-white truncate text-sm">{{ item.title }}</p>
-        {% if item.ok %}
-        <p class="text-xs text-gray-500 dark:text-gray-400">Done{% if item.cost is not none %} · ${{ '%.3f'|format(item.cost) }}{% endif %}{% if item.ago %} · {{ item.ago }}{% endif %}</p>
-        {% else %}
-        <p class="text-xs text-red-600 dark:text-red-400 truncate">{{ item.error }}{% if item.ago %} <span class="text-gray-500 dark:text-gray-400">· {{ item.ago }}</span>{% endif %}</p>
-        {% endif %}
-      </div>
-    </div>
-    {% endfor %}
-
-    {% if not ai.running and not ai.waiting and not ai.recent %}
-    <p class="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">No AI covers yet. Press <strong>AI Cover</strong> in a story's window, or select several stories in the library.</p>
     {% endif %}
+    {% if ai.summary.running %}
+    <div class="flex items-center gap-2.5 px-3 py-1.5" data-ai-summary-state="running">
+      {{ spinner() }}{{ kind_badge('Summary') }}
+      <p class="min-w-0 flex-1 text-sm truncate font-medium text-gray-900 dark:text-white">{{ ai.summary.running.title }}</p>
+    </div>
+    {% endif %}
+
+    {% for kind, label, items, cancel in (('cover', 'Cover', ai.covers.waiting, 'cancelAiCover'), ('rewrite', 'Rewrite', ai.rewrite.waiting, 'cancelAiJob'), ('summary', 'Summary', ai.summary.waiting, 'cancelAiJob')) %}
+    {% if items %}
+    <div data-sortable="{{ kind }}" class="divide-y divide-slate-100 dark:divide-slate-700/50">
+      {% for item in items %}
+      <div class="queue-row flex items-center gap-2.5 px-3 py-1.5" data-sort-id="{{ item.story_id }}">
+        {% if items|length > 1 %}{{ handle(item.title) }}{% else %}<span class="flex-shrink-0 w-2 h-2 ml-1 mr-1 rounded-full bg-blue-500"></span>{% endif %}
+        {{ kind_badge(label) }}
+        <p class="min-w-0 flex-1 text-sm truncate"><span class="font-medium text-gray-900 dark:text-white">{{ item.title }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400"> · waiting</span></p>
+        {% if kind == 'cover' %}{{ remove_button('cancelAiCover(' ~ item.story_id ~ ')', "Don't make this cover") }}
+        {% else %}{{ remove_button("cancelAiJob('" ~ kind ~ "', " ~ item.story_id ~ ")", 'Take it out of the queue') }}{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% endfor %}
+
+    {% for item in ai.covers.failed %}
+    <div class="flex items-center gap-2.5 px-3 py-1.5" data-ai-cover-state="failed">
+      <svg class="flex-shrink-0 w-4 h-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      {{ kind_badge('Cover') }}
+      <div class="min-w-0 flex-1">
+        <p class="text-sm truncate font-medium text-gray-900 dark:text-white">{{ item.title }}</p>
+        <p class="text-xs text-red-600 dark:text-red-400 truncate" title="{{ item.error }}">{{ item.error }}{% if item.ago %} <span class="text-gray-500 dark:text-gray-400">· {{ item.ago }}</span>{% endif %}</p>
+      </div>
+    </div>
+    {% endfor %}
   </div>
 </div>
 {% endif %}

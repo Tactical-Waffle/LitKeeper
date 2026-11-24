@@ -48,7 +48,7 @@
 
     <div id="aiCoverQueue"
          hx-get="/queue/partials/ai-covers"
-         hx-trigger="every 3s"
+         hx-trigger="every 3s [!window.queueSorting]"
          hx-swap="innerHTML">
       {% include 'queue/partials/ai_covers.html' %}
     </div>
@@ -56,14 +56,106 @@
     <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1.5">Downloads</h3>
     <div id="queueList"
          hx-get="/queue/partials/list"
-         hx-trigger="every 2s"
+         hx-trigger="every 2s [!window.queueSorting]"
          hx-swap="innerHTML">
       {% with items=queue_list['items'], next_download_in=queue_list['next_download_in'] %}
         {% include 'queue/partials/queue_list.html' %}
       {% endwith %}
     </div>
 
+<style>
+  .queue-handle { cursor: grab; touch-action: none; padding: .15rem 0; }
+  .queue-handle:focus-visible { outline: 2px solid rgb(99 102 241); border-radius: .25rem; }
+  .queue-row.dragging { background: rgb(99 102 241 / .1); outline: 2px solid rgb(99 102 241); outline-offset: -2px; position: relative; z-index: 2; cursor: grabbing; }
+  body.queue-sorting { user-select: none; -webkit-user-select: none; }
+</style>
 <script>
+  // Drag and drop, as in RedKeeper: drag a waiting job by its handle (mouse or touch), or focus the handle and use
+  // the up and down arrow keys. The new order is saved at once. The lists stop refreshing while a job is dragged.
+  (function () {
+    let sorting = null;
+    window.queueSorting = false;
+
+    function rows(list) { return [...list.querySelectorAll(':scope > [data-sort-id]')]; }
+    function number(list) { rows(list).forEach((row, i) => { const n = row.querySelector('[data-queue-number]'); if (n) n.textContent = `${i + 1}.`; }); }
+    function numberAll() { document.querySelectorAll('[data-sortable]').forEach(number); }
+
+    async function save(list) {
+      const body = { kind: list.dataset.sortable, ids: rows(list).map(row => Number(row.dataset.sortId)) };
+      try {
+        const res = await fetch('/queue/api/order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.message || 'Could not save the new order');
+        window.toast?.show('Queue order saved', 'success', 2000);
+      } catch (error) {
+        window.toast?.show(error.message, 'error');
+      }
+      const target = list.dataset.sortable === 'download' ? '#queueList' : '#aiCoverQueue';
+      const url = list.dataset.sortable === 'download' ? '/queue/partials/list' : '/queue/partials/ai-covers';
+      htmx.ajax('GET', url, { target, swap: 'innerHTML' });
+    }
+
+    document.addEventListener('pointerdown', event => {
+      const handle = event.target.closest('[data-drag-handle]');
+      if (!handle || event.button > 0) return;
+      const row = handle.closest('[data-sort-id]');
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      sorting = { row, list: row.parentElement, moved: false, pointer: event.pointerId };
+      window.queueSorting = true;
+      row.classList.add('dragging');
+      document.body.classList.add('queue-sorting');
+    });
+    document.addEventListener('pointermove', event => {
+      if (!sorting || event.pointerId !== sorting.pointer) return;
+      const { row, list } = sorting;
+      const others = rows(list).filter(other => other !== row);
+      const after = others.find(other => event.clientY < other.getBoundingClientRect().top + other.offsetHeight / 2);
+      if (after && after.previousElementSibling !== row) { after.before(row); sorting.moved = true; }
+      else if (!after && others.length && others[others.length - 1].nextElementSibling !== row) { others[others.length - 1].after(row); sorting.moved = true; }
+      number(list);
+    });
+    function drop(event) {
+      if (!sorting || event.pointerId !== sorting.pointer) return;
+      const { row, list, moved } = sorting;
+      row.classList.remove('dragging');
+      document.body.classList.remove('queue-sorting');
+      sorting = null;
+      window.queueSorting = false;
+      if (moved) save(list);
+    }
+    document.addEventListener('pointerup', drop);
+    document.addEventListener('pointercancel', drop);
+    document.addEventListener('keydown', event => {
+      const handle = event.target.closest?.('[data-drag-handle]');
+      if (!handle || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      const row = handle.closest('[data-sort-id]');
+      const list = row.parentElement;
+      const sibling = event.key === 'ArrowUp' ? row.previousElementSibling : row.nextElementSibling;
+      if (!sibling || !sibling.dataset.sortId) return;
+      event.key === 'ArrowUp' ? sibling.before(row) : sibling.after(row);
+      number(list);
+      handle.focus();
+      save(list);
+    });
+    // Number the waiting rows each time a list is drawn or refreshed.
+    document.addEventListener('htmx:afterSwap', numberAll);
+    document.addEventListener('DOMContentLoaded', numberAll);
+    numberAll();
+  })();
+
+  async function cancelAiJob(kind, storyId) {
+    try {
+      const res = await fetch(`/queue/api/ai/${kind}/${storyId}`, { method: 'DELETE' });
+      const data = await res.json();
+      window.toast?.show(data.success ? 'Taken out of the queue' : (data.message || 'Could not take it out'), data.success ? 'success' : 'error');
+    } catch {
+      window.toast?.show('Request failed', 'error');
+    }
+    htmx.ajax('GET', '/queue/partials/ai-covers', { target: '#aiCoverQueue', swap: 'innerHTML' });
+  }
+
   async function cancelItem(itemId) {
     try {
       const res = await fetch(`/queue/api/items/${itemId}`, { method: 'DELETE' });

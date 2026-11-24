@@ -689,8 +689,8 @@ def create_app() -> Flask:
         app.format_worker.start()
         atexit.register(app.format_worker.stop)
 
-        from app.services import ai_rewrite, ai_summary
-        for _service in (ai_rewrite, ai_summary):  # AI Rewrite and summary queues saved before a restart.
+        from app.services import ai_cover, ai_rewrite, ai_summary
+        for _service in (ai_cover, ai_rewrite, ai_summary):  # AI queues saved before a restart.
             try:
                 _service.restore(app)
             except Exception as e:

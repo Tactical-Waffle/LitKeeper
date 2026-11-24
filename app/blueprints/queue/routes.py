@@ -1,5 +1,5 @@
 from __future__ import annotations
-from flask import Blueprint, render_template, jsonify
+from flask import Blueprint, render_template, jsonify, request
 from flask.typing import ResponseReturnValue
 from app.models import DownloadQueueItem, db
 from app.services import log_error
@@ -55,9 +55,21 @@ def _list_values(items) -> dict:
     return {'items': shown, 'next_download_in': _minutes_until(next_download_at()) if waiting else None}
 
 
+def _shown_items() -> list:
+    """The queue list in the order it runs: downloading now, then the waiting ones in the order they will be
+    downloaded (drag to change it), then the history, newest first."""
+    active = _visible_items_query().filter(DownloadQueueItem.status.in_(('processing', 'pending', 'rate_limited'))) \
+        .order_by(DownloadQueueItem.created_at.asc()).all()
+    rank = {'processing': 0, 'pending': 1, 'rate_limited': 2}
+    active.sort(key=lambda item: rank[item.status])  # A stable sort keeps the waiting order.
+    history = _visible_items_query().filter(DownloadQueueItem.status.notin_(('processing', 'pending', 'rate_limited'))) \
+        .order_by(desc(DownloadQueueItem.created_at)).limit(max(20, 70 - len(active))).all()
+    return active + history
+
+
 @queue.route('/')
 def index() -> ResponseReturnValue:
-    all_items = _visible_items_query().order_by(desc(DownloadQueueItem.created_at)).limit(70).all()
+    all_items = _shown_items()
 
     rate_limited_count = DownloadQueueItem.query.filter_by(status='rate_limited').count()
     return render_template('queue/index.html',
@@ -67,7 +79,7 @@ def index() -> ResponseReturnValue:
                            failed=DownloadQueueItem.query.filter_by(status='failed').count(),
                            rate_limited=rate_limited_count,
                            queue_list=_list_values(all_items),
-                           ai=_ai_cover_queue())
+                           ai=_ai_queue())
 
 @queue.route('/api/items')
 def get_queue_items() -> ResponseReturnValue:
@@ -136,8 +148,7 @@ def queue_stats_partial() -> ResponseReturnValue:
 def queue_list_partial() -> ResponseReturnValue:
     """HTMX partial for queue list"""
     try:
-        all_items = _visible_items_query().order_by(desc(DownloadQueueItem.created_at)).limit(70).all()
-        return render_template('queue/partials/queue_list.html', **_list_values(all_items))
+        return render_template('queue/partials/queue_list.html', **_list_values(_shown_items()))
     except Exception as e:
         log_error(f"Error rendering queue list: {str(e)}")
         return '<div class="text-red-600 dark:text-red-400">Error loading queue</div>', 500
@@ -184,14 +195,105 @@ def _ai_cover_queue() -> dict:
             'configured': bool(ai_cover.settings()['api_key']), 'parallel': ai_cover.parallel_limit()}
 
 
+FAILURES_SHOWN_FOR_HOURS = 24
+
+
+def _ai_queue() -> dict:
+    """All AI work for the Queue page: AI covers, AI Rewrite and AI summaries, each running on its own beside
+    the downloads. Finished covers leave the list; a cover that failed stays for a day so it can be seen."""
+    from datetime import datetime, timedelta, timezone
+    from app.models import Story
+    from app.services import ai_cover, ai_rewrite, ai_summary
+    covers = _ai_cover_queue()
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=FAILURES_SHOWN_FOR_HOURS)
+
+    def recent(entry):
+        try:
+            when = datetime.fromisoformat(entry.get('when') or '')
+            return (when if when.tzinfo else when.replace(tzinfo=timezone.utc)) >= cutoff
+        except ValueError:
+            return False
+    failed = [e for e in covers['recent'] if not e['ok'] and recent(e)]
+    rewrite, summaries = ai_rewrite.overview(), ai_summary.overview()
+    ids = {i for i in [rewrite['running'], summaries['running']] if i} | set(rewrite['waiting']) | set(summaries['waiting'])
+    stories = {s.id: s for s in Story.query.filter(Story.id.in_(ids)).all()} if ids else {}
+
+    def named(story_id):
+        story = stories.get(story_id)
+        return {'story_id': story_id, 'title': story.title if story else f'Story {story_id} (deleted)',
+                'author': story.author.name if story and story.author else ''}
+    live = ai_rewrite.progress() if rewrite['running'] else {}
+    running_rewrite = None
+    if rewrite['running']:
+        running_rewrite = {**named(rewrite['running']),
+                           'progress': (f"Part {live['number']} ({live['index']} of {live['total']})"
+                                        + (f" · {live['eta_text']}" if live.get('eta_text') else '')
+                                        + (' · stopping after this part' if live.get('stopping') else ''))
+                           if live.get('total') else 'Starting'}
+    result = {'covers': {**covers, 'failed': failed},
+              'rewrite': {'running': running_rewrite, 'waiting': [named(i) for i in rewrite['waiting']]},
+              'summary': {'running': named(summaries['running']) if summaries['running'] else None,
+                          'waiting': [named(i) for i in summaries['waiting']]}}
+    result['busy'] = bool(covers['running'] or covers['waiting'] or running_rewrite or rewrite['waiting']
+                          or summaries['running'] or summaries['waiting'])
+    result['shown'] = result['busy'] or bool(failed)
+    return result
+
+
 @queue.route('/partials/ai-covers')
 def ai_covers_partial() -> ResponseReturnValue:
-    """HTMX partial: the AI cover queue."""
+    """HTMX partial: the AI work (covers, rewrites, summaries)."""
     try:
-        return render_template('queue/partials/ai_covers.html', ai=_ai_cover_queue())
+        return render_template('queue/partials/ai_covers.html', ai=_ai_queue())
     except Exception as e:
-        log_error(f"Error rendering the AI cover queue: {str(e)}")
-        return '<div class="text-red-600 dark:text-red-400 text-sm">Error loading AI covers</div>', 500
+        log_error(f"Error rendering the AI queue: {str(e)}")
+        return '<div class="text-red-600 dark:text-red-400 text-sm">Error loading the AI queue</div>', 500
+
+
+@queue.route('/api/order', methods=['POST'])
+def reorder() -> ResponseReturnValue:
+    """Drag and drop on the Queue page. Body {"kind": "download" | "cover" | "rewrite" | "summary", "ids": [...]}:
+    the waiting downloads (queue item ids) or waiting AI work (story ids) in their new order."""
+    data = request.get_json(silent=True) or {}
+    kind = data.get('kind')
+    try:
+        ids = [int(i) for i in data.get('ids') or []]
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'The order must be a list of numbers.'}), 400
+    if kind == 'download':
+        _reorder_downloads(ids)
+    elif kind in ('cover', 'rewrite', 'summary'):
+        from importlib import import_module
+        import_module(f"app.services.{ {'cover': 'ai_cover', 'rewrite': 'ai_rewrite', 'summary': 'ai_summary'}[kind] }").reorder(ids)
+    else:
+        return jsonify({'success': False, 'message': 'Unknown queue.'}), 400
+    log_action(f"[Queue] New order for waiting {kind} jobs: {', '.join(map(str, ids))}")
+    return jsonify({'success': True})
+
+
+def _reorder_downloads(ids: list) -> None:
+    """Waiting downloads run oldest first, so the new order is saved by handing the same set of queue times
+    out again in the new order: no other item moves, and nothing else about the items changes."""
+    waiting = DownloadQueueItem.query.filter(DownloadQueueItem.status == 'pending').all()
+    by_id = {item.id: item for item in waiting}
+    ordered = [by_id[i] for i in dict.fromkeys(ids) if i in by_id]
+    ordered += sorted((item for item in waiting if item not in ordered), key=lambda item: item.created_at)
+    times = sorted(item.created_at for item in ordered)
+    for item, when in zip(ordered, times):
+        item.created_at = when
+    db.session.commit()
+
+
+@queue.route('/api/ai/<kind>/<int:story_id>', methods=['DELETE'])
+def cancel_ai_job(kind: str, story_id: int) -> ResponseReturnValue:
+    """Take a waiting AI Rewrite or AI summary out of the queue."""
+    from app.services import ai_rewrite, ai_summary
+    service = {'rewrite': ai_rewrite, 'summary': ai_summary}.get(kind)
+    if not service:
+        return jsonify({'success': False, 'message': 'Unknown queue.'}), 404
+    if service.remove(story_id):
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'That job is not waiting any more.'}), 409
 
 
 @queue.route('/api/ai-covers/<int:story_id>', methods=['DELETE'])
