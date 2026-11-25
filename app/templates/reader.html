@@ -135,6 +135,29 @@
   window.TARGET_CHAPTER = {{ target_chapter }};
   window.TARGET_PARA = {{ target_para if target_para is not none else 0 }};
   {% endif %}
+  {% if auto_rewrite_next and multipart %}
+  // Settings → AI Rewrite → Rewrite the next part while reading: halfway through a part, ask for the next one.
+  (() => {
+    const asked = new Set();
+    const parts = [...document.querySelectorAll('.story-content .chapter[data-part]')];
+    function check() {
+      // The first paragraph at or below the top of the screen (parts not shown, in one-part-at-a-time mode, are skipped).
+      const top = [...document.querySelectorAll('p[data-chapter]')]
+        .find(p => p.getClientRects().length && p.getBoundingClientRect().top >= -10);
+      const part = top?.closest('.chapter[data-part]');
+      const index = parts.indexOf(part);
+      if (index < 0 || index === parts.length - 1 || asked.has(index)) return;
+      const paras = part.querySelectorAll('p[data-chapter]');
+      const at = [...paras].indexOf(top);
+      if (paras.length && (at + 1) / paras.length < 0.5) return;
+      asked.add(index);
+      fetch(`/api/story/${window.STORY_ID}/rewrite-next`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ part: index + 1 }) }).catch(() => asked.delete(index));
+    }
+    let timer = null;
+    window.addEventListener('scroll', () => { clearTimeout(timer); timer = setTimeout(check, 400); }, { passive: true });
+  })();
+  {% endif %}
   // Mark as Read at the end of the story; with Settings → Reading on, done on reaching the end.
   (() => {
     const button = document.getElementById('mark-read-btn');

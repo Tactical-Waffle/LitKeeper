@@ -63,7 +63,12 @@ function initializeLibraryFilters() {
   const sourceFilter = document.getElementById('sourceFilter');
   const sortOrderToggle = document.getElementById('sortOrderToggle');
 
-  const savedSortBy = localStorage.getItem('library_sort_by') || 'date';
+  // A saved sort that is no longer offered (Page Count) goes back to the default.
+  let savedSortBy = localStorage.getItem('library_sort_by') || 'date';
+  if (sortBy && ![...sortBy.options].some(option => option.value === savedSortBy)) {
+    savedSortBy = 'date';
+    try { localStorage.removeItem('library_sort_by'); } catch (_) {}
+  }
   // Saved categories: a JSON list now; earlier builds saved one name (or "all").
   let savedCategories = [];
   try {

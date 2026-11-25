@@ -1481,6 +1481,19 @@ def story_literotica_update(story_id: int) -> ResponseReturnValue:
                     'favorites': story.literotica_favorites, 'comments': story.literotica_comments})
 
 
+@api.route("/story/<int:story_id>/rewrite-next", methods=['POST'])
+def rewrite_next_part(story_id: int) -> ResponseReturnValue:
+    """The reader is halfway through the part at `part` (its place in the story, from 1): rewrite the part after it,
+    when Settings → AI Rewrite → Rewrite the next part while reading is on."""
+    from app.models import Story
+    from app.services import ai_rewrite
+    story = Story.query.get_or_404(story_id)
+    part = (request.get_json(silent=True) or {}).get('part')
+    if not isinstance(part, int) or isinstance(part, bool):
+        return jsonify({'success': False, 'message': 'part must be a number'}), 400
+    return jsonify({'success': True, 'state': ai_rewrite.next_part(current_app._get_current_object(), story, part)})
+
+
 @api.route("/story/<int:story_id>/modal", methods=['GET'])
 def get_story_modal(story_id: int) -> ResponseReturnValue:
     from app.models import Story
@@ -2552,7 +2565,8 @@ def make_ai_cover(story_id: int) -> ResponseReturnValue:
     if not ai_cover.settings()['api_key']:
         return jsonify({"success": False, "message": "Add an OpenRouter API key in Settings → AI Covers first."}), 400
     try:
-        state = ai_cover.start(current_app._get_current_object(), story.id)
+        # New AI Cover for a story that already has AI artwork starts with the second image model, for a different look.
+        state = ai_cover.start(current_app._get_current_object(), story.id, remake=ai_cover.info(story).get('has_art', False))
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 409
     log_action(f"AI cover {state} for story {story.id}")

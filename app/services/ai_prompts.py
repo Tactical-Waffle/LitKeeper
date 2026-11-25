@@ -82,7 +82,7 @@ Reply with the edited text only."""
 PROMPTS = {
     'cover_brief': {'label': 'Scene description (text model)', 'default': COVER_BRIEF,
                     'help': 'Instructions for the text model. It also receives the title, category, tags, the story\'s '
-                            'description and story text (how much is set above).'},
+                            'description and story text (Settings → AI Models and Story Text sets how much).'},
     'cover_image': {'label': 'Picture, LitKeeper adds the lettering (image model)', 'default': COVER_IMAGE,
                     'help': '{description} is the written scene; {title_space} is how much of the top the title will cover.'},
     'cover_image_lettered': {'label': 'Picture with title and author (image model)', 'default': COVER_IMAGE_LETTERED,
@@ -92,7 +92,7 @@ PROMPTS = {
                     'help': 'Used when every image model refused a cover. It receives only the refused description.'},
     'summary': {'label': 'AI summary (text model)', 'default': SUMMARY,
                 'help': 'Instructions for Make Summary. It receives the same title, category, tags, description and story '
-                        'text as the cover\'s scene description (how much is set above).'},
+                        'text as the cover\'s scene description (Settings → AI Models and Story Text sets how much).'},
     'rewrite': {'label': 'AI Rewrite (only when the rewrite model is not a preset)', 'default': REWRITE,
                 'help': 'Sent ahead of each part when Settings → AI Rewrite names a model. An OpenRouter preset '
                         '(@preset/…) uses its own prompt instead, and this one is not sent.'},

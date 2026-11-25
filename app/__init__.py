@@ -159,6 +159,9 @@ def create_app() -> Flask:
             cursor.execute("PRAGMA busy_timeout=30000")
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.close()
+            # The library's Title sort: numbers in titles in order of their value ("Part 2" before "Part 10").
+            from app.utils.natural_sort import natural_compare
+            dbapi_conn.create_collation('NATURAL', natural_compare)
 
     # Settings → Logs (file size limit and days kept) lives in the database, which is ready only now.
     try:
@@ -708,6 +711,9 @@ def create_app() -> Flask:
                 _service.restore(app)
             except Exception as e:
                 print(f"[startup] Could not restore the {_service.__name__} queue: {e}")
+
+        from app.services.word_counts import recount_in_background
+        recount_in_background(app)  # Once: every story's word count is the sum of all its parts.
 
         from app.services.search_index_worker import SearchIndexWorker
         app.search_index_worker = SearchIndexWorker(app)

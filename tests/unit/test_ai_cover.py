@@ -173,7 +173,7 @@ class TestStoryDetails:
 
     def test_excerpt_settings_parts_percent_and_limit(self, app: Flask, story) -> None:
         with app.app_context():
-            assert ai_cover.settings()['excerpt_parts'] == 5 and ai_cover.settings()['excerpt_percent'] == 20
+            assert ai_cover.settings()['excerpt_parts'] == 3 and ai_cover.settings()['excerpt_percent'] == 20
             ai_cover.save_settings({'excerpt_percent': '50', 'excerpt_parts': '1', 'excerpt_words': '40000'})
             text = ai_cover.story_details(_get_story(story), 'excerpts')
             assert 'Part 2 (first 50%):' in text and 'Part 3' not in text
@@ -193,7 +193,7 @@ class TestStoryDetails:
     def test_default_label(self, app: Flask) -> None:
         with app.app_context():
             assert ai_cover.story_text_options(ai_cover.settings())['excerpts'][0] == \
-                'All of part 1 plus the first 20% of the next 5 parts (up to 40,000 words)'
+                'All of part 1 plus the first 20% of the next 3 parts (up to 20,000 words)'
 
     @pytest.mark.parametrize('form', [{'excerpt_percent': '0'}, {'excerpt_percent': '101'}, {'excerpt_parts': '0'},
                                       {'excerpt_parts': 'some'}, {'excerpt_words': '500'}, {'excerpt_words': 'lots'}])
@@ -369,7 +369,7 @@ class TestRoutes:
         assert API_KEY.encode() not in client.get('/settings/').data
 
     def test_settings_rejects_bad_model(self, client: FlaskClient) -> None:
-        response = client.post('/settings/ai-covers', json={'image_model': 'bad model'})
+        response = client.post('/settings/ai-covers', json={'image_model': 'bad!model'})
         assert response.status_code == 400
 
     def test_check_models(self, client: FlaskClient) -> None:

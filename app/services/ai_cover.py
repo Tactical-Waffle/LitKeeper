@@ -41,11 +41,13 @@ MODEL_NAME = re.compile(r'[@\w./:-]+')
 # How much of the story the text model reads: (label, words in all).
 STORY_TEXT = {
     'opening': ('Opening only', 1200),
-    'excerpts': ('All of part 1 plus the first 20% of the next 5 parts (up to 40,000 words)', 40000),
+    'excerpts': ('All of part 1 plus the first 20% of the next 3 parts (up to 20,000 words)', 20000),
     'whole': ('The whole story (up to 40,000 words)', 40000),
 }
-LATER_PART_SHARE = 0.2   # The excerpt defaults: 20% of each of the next 5 parts, 40,000 words in all.
-EXCERPT_DEFAULTS = {'excerpt_percent': 20, 'excerpt_parts': 5, 'excerpt_words': 40000}
+LATER_PART_SHARE = 0.2   # The excerpt defaults: 20% of each of the next 3 parts, 20,000 words in all.
+EXCERPT_DEFAULTS = {'excerpt_percent': 20, 'excerpt_parts': 3, 'excerpt_words': 20000}
+OLD_EXCERPT_DEFAULTS = (20, 5, 40000)  # Until 2026-11-25; settings never changed from these move to the new ones.
+MAX_MODELS = 5  # Text models and image models: each a list of up to five, tried in order.
 EXCERPT_WORDS_RANGE = (1000, 200000)
 LETTERING = {
     'image': 'The image model letters the title and author',
@@ -69,6 +71,10 @@ _lock = threading.Lock()
 # --- Settings -------------------------------------------------------------------------------
 
 def settings() -> dict:
+    """AI cover settings, and what every AI text request shares (Settings → AI Models and Story Text): `text_models`,
+    tried in order for cover descriptions, toned-down scenes and summaries, and how much story text they read.
+    `image_models` are tried in order for the picture. `text_model` and `image_model` are the first of each, and
+    `fallback_models` the image models after the first."""
     from app.models import AppConfig
     config = AppConfig.query.filter_by(key=KEY).first()
     value = config.get_value() if config else None
@@ -77,7 +83,49 @@ def settings() -> dict:
     # then hold the old default (off) without anyone having chosen it, so that value is not used.
     if not saved.get('auto_chosen'):
         saved.pop('auto', None)
-    return {**DEFAULTS, **saved}
+    result = {**DEFAULTS, **saved}
+    if (result['excerpt_percent'], result['excerpt_parts'], result['excerpt_words']) == OLD_EXCERPT_DEFAULTS:
+        result.update(EXCERPT_DEFAULTS)  # Never changed from the old defaults: the new ones apply.
+    text = saved.get('text_models')
+    if not text:  # Before the list: the description model, then the summary model when it was a different one.
+        summary = AppConfig.query.filter_by(key='ai_summaries').first()
+        summary_value = summary.get_value() if summary else None
+        summary_model = summary_value.get('model') if isinstance(summary_value, dict) else None
+        text = [result['text_model']] + ([summary_model] if summary_model else [])
+    images = saved.get('image_models') or [result['image_model']] + list(result.get('fallback_models') or [])
+    text = list(dict.fromkeys(m for m in text if m))[:MAX_MODELS] or [DEFAULT_TEXT_MODEL]
+    images = list(dict.fromkeys(m for m in images if m))[:MAX_MODELS] or [DEFAULT_IMAGE_MODEL]
+    result.update(text_models=text, image_models=images, text_model=text[0], image_model=images[0],
+                  fallback_models=images[1:])
+    return result
+
+
+_used = threading.local()
+
+
+def used_model(default: str = '') -> str:
+    """The text model that answered the last chat() call in this thread."""
+    return getattr(_used, 'model', '') or default
+
+
+def chat(payload: dict, api_key: str, timeout: int = 180, label: str = '', kind: Optional[str] = None,
+         models=None) -> dict:
+    """One text request, to each text model in turn until one answers (Settings → AI Models and Story Text). `models`:
+    one name or a list (default: the saved text models). A model that fails is logged and the next one is asked;
+    a StopError (key, credit, OpenRouter unreachable) is raised at once, and the last failure otherwise."""
+    models = [models] if isinstance(models, str) else list(models or settings()['text_models'])
+    for index, model in enumerate(models):
+        try:
+            result = _post(CHAT, {**payload, 'model': model}, api_key, timeout=timeout, kind=kind, label=label)
+            _used.model = result.get('model') or model
+            return result
+        except StopError:
+            raise
+        except ValueError as error:
+            if index == len(models) - 1:
+                raise
+            log_action(f'{label or "AI request"}: {model} failed ({error}); trying {models[index + 1]}')
+    raise ValueError('No text model is set. Add one in Settings → AI Models and Story Text.')
 
 
 def excerpt_label(config: Optional[dict] = None) -> str:
@@ -130,12 +178,19 @@ def save_settings(form: dict) -> dict:
         if len(key) > 200 or not re.fullmatch(r'[\w-]+', key):
             raise ValueError('That does not look like an OpenRouter API key (it usually starts with sk-or-).')
         new['api_key'] = key
-    for field, default in (('text_model', DEFAULT_TEXT_MODEL), ('image_model', DEFAULT_IMAGE_MODEL)):
-        if field in form:
-            name = str(form.get(field) or '').strip() or default
-            if len(name) > 120 or not MODEL_NAME.fullmatch(name):
-                raise ValueError(f'"{name}" is not an OpenRouter model name (for example {default}).')
-            new[field] = name
+    # Text models (AI Models and Story Text) and image models (AI Covers): comma-separated, up to five each, tried in
+    # order; an empty box goes back to the default. An older form's fallback image models are added after the image models.
+    if 'text_model' in form or 'text_models' in form:
+        new['text_models'] = _model_names(form.get('text_models', form.get('text_model')), 'text models', MAX_MODELS) \
+            or [DEFAULT_TEXT_MODEL]
+    if 'image_model' in form or 'image_models' in form or 'fallback_models' in form:
+        images = _model_names(form.get('image_models', form.get('image_model')), 'image models', MAX_MODELS) \
+            if ('image_model' in form or 'image_models' in form) else current['image_models'][:1]
+        extra = _model_names(form.get('fallback_models'), 'fallback image models', MAX_MODELS) if 'fallback_models' in form else []
+        images = list(dict.fromkeys((images or [DEFAULT_IMAGE_MODEL]) + extra))
+        if len(images) > MAX_MODELS:
+            raise ValueError(f'List at most {MAX_MODELS} image models.')
+        new['image_models'] = images
     if 'parallel' in form:
         try:
             parallel = int(form.get('parallel'))
@@ -144,8 +199,6 @@ def save_settings(form: dict) -> dict:
         if not 1 <= parallel <= PARALLEL_MAX:
             raise ValueError(f'Covers at a time must be from 1 to {PARALLEL_MAX}.')
         new['parallel'] = parallel
-    if 'fallback_models' in form:
-        new['fallback_models'] = _model_names(form.get('fallback_models'), 'fallback image models', 5)
     if 'excerpt_percent' in form:
         try:
             percent = int(str(form.get('excerpt_percent')).strip().rstrip('%'))
@@ -184,6 +237,7 @@ def save_settings(form: dict) -> dict:
             new[flag] = bool(form.get(flag))
     if 'auto' in form:
         new['auto_chosen'] = True
+    new.update(text_model=new['text_models'][0], image_model=new['image_models'][0], fallback_models=new['image_models'][1:])
     config = AppConfig.query.filter_by(key=KEY).first()
     if not config:
         config = AppConfig(key=KEY, value_type='json', description='OpenRouter key and models for AI covers')
@@ -516,18 +570,19 @@ def check_models() -> list[tuple[bool, str]]:
         results.append((remaining is None or remaining > 0.05,
                         'API key accepted' + ('' if remaining is None else f'; ${remaining:.2f} of its spending limit remains') + '.'))
 
-    text = config['text_model']
-    status, body = _get(f'models/{text}/endpoints')
-    found = body.get('data') or {}
-    if status != 200:
-        results.append((False, f'Text model {text}: OpenRouter does not list it. Check the spelling.'))
-    elif not any(e.get('status', 0) == 0 for e in found.get('endpoints') or []):
-        results.append((False, f'Text model {text}: no provider is answering right now. Try again later or choose another.'))
-    else:
-        results.append((True, f'Text model {text}: available.'))
+    for index, text in enumerate(config['text_models']):
+        role = 'Text model' if index == 0 else f'Text model {index + 1}'
+        status, body = _get(f'models/{text}/endpoints')
+        found = body.get('data') or {}
+        if status != 200:
+            results.append((False, f'{role} {text}: OpenRouter does not list it. Check the spelling.'))
+        elif not any(e.get('status', 0) == 0 for e in found.get('endpoints') or []):
+            results.append((False, f'{role} {text}: no provider is answering right now. Try again later or choose another.'))
+        else:
+            results.append((True, f'{role} {text}: available.'))
 
-    for index, image in enumerate([config['image_model']] + list(config.get('fallback_models') or [])):
-        role = 'Image model' if index == 0 else f'Fallback image model {index}'
+    for index, image in enumerate(config['image_models']):
+        role = 'Image model' if index == 0 else f'Image model {index + 1}'
         status, body = _get(f'images/models/{image}/endpoints')
         endpoints = body.get('endpoints') or []
         if status != 200 or not endpoints:
@@ -616,13 +671,31 @@ def _set_progress(text: str) -> None:
             _active[story_id]['progress'] = text
 
 
-def write_brief(story, api_key: str, model: str) -> tuple[str, float]:
-    """The scene description for the image model, and what it cost."""
+def write_brief(story, api_key: str, model) -> tuple[str, float]:
+    """The scene description from the first text model that writes a usable one (`model`: one name or a list). A model
+    that fails, declines or answers with nothing usable is logged and the next one is asked."""
+    models = [model] if isinstance(model, str) else list(model)
+    spent = 0.0
+    for index, name in enumerate(models):
+        try:
+            brief, cost = _write_brief(story, api_key, name)
+            return brief, spent + cost
+        except StopError:
+            raise
+        except ValueError as error:
+            spent += getattr(error, 'cost', 0.0)
+            if index == len(models) - 1:
+                raise
+            log_action(f'AI cover description for story {story.id}: {name} failed ({error}); trying {models[index + 1]}')
+
+
+def _write_brief(story, api_key: str, model: str) -> tuple[str, float]:
+    """The scene description for the image model from one text model, and what it cost."""
     payload = {'model': model, 'usage': {'include': True}, 'max_tokens': 4000,
                'reasoning': {'effort': 'low', 'exclude': True},
                'messages': [{'role': 'system', 'content': ai_prompts.get('cover_brief')},
                             {'role': 'user', 'content': story_details(story)}]}
-    result = _post(CHAT, payload, api_key, timeout=180)
+    result = _post(CHAT, payload, api_key, timeout=180, label=f'cover description for story {story.id}')
     choice = (result.get('choices') or [{}])[0]
     brief = ai_prompts.tidy_reply((choice.get('message') or {}).get('content') or '')
     if len(brief.split()) < 15:
@@ -687,11 +760,11 @@ def paint(brief: str, api_key: str, model: str, title: str, author: str, lettere
     return _as_jpeg(base64.b64decode(images[0]['b64_json'])), float((result.get('usage') or {}).get('cost') or 0)
 
 
-def soften(brief: str, api_key: str, model: str) -> tuple[str, float]:
-    """Ask the text model to tone a refused description down."""
-    payload = {'model': model, 'usage': {'include': True}, 'max_tokens': 3000, 'reasoning': {'effort': 'low', 'exclude': True},
+def soften(brief: str, api_key: str, model) -> tuple[str, float]:
+    """Ask the text models (in order) to tone a refused description down."""
+    payload = {'usage': {'include': True}, 'max_tokens': 3000, 'reasoning': {'effort': 'low', 'exclude': True},
                'messages': [{'role': 'system', 'content': ai_prompts.get('cover_safer')}, {'role': 'user', 'content': brief}]}
-    result = _post(CHAT, payload, api_key, timeout=180)
+    result = chat(payload, api_key, label='toned-down cover description', models=model)
     text = ai_prompts.tidy_reply(((result.get('choices') or [{}])[0].get('message') or {}).get('content') or '')
     if len(text.split()) < 15:
         raise ValueError('The text model did not write a toned-down description.')
@@ -706,7 +779,8 @@ def paint_with_fallbacks(story, brief: str, api_key: str, config: dict) -> tuple
     3. if everything was refused: a toned-down description from the text model, then each model again.
     A failure no retry can fix (key, credit, connection) stops at once."""
     title, author = story.title, story.author.name if story.author else ''
-    chosen = [config['image_model']] + [m for m in config.get('fallback_models') or [] if m != config['image_model']]
+    chosen = list(config.get('image_models') or
+                  [config['image_model']] + [m for m in config.get('fallback_models') or [] if m != config['image_model']])
     wants_lettering = config.get('lettering', 'image') == 'image'
     attempts: list[str] = []
     broken: set[str] = set()
@@ -735,19 +809,20 @@ def paint_with_fallbacks(story, brief: str, api_key: str, config: dict) -> tuple
     done = run(plan, brief, False)
     if not done and config.get('retry_softer', True) and any(refused(Exception(a)) for a in attempts) and len(broken) < len(chosen):
         _set_progress('Toning down the scene')
-        softer, spent = soften(brief, api_key, config['text_model'])
+        softer, spent = soften(brief, api_key, config.get('text_models') or config['text_model'])
         cost += spent
         lettering = wants_lettering and not config.get('retry_unlettered', True)
         done = run([(model, lettering) for model in chosen], softer, True)
     if not done:
         raise ValueError('No image model would paint this cover. Tried: ' + '; '.join(attempts) +
-                         '. Add fallback image models in Settings → AI Covers, or edit the prompts.')
+                         '. Add more image models in Settings → AI Covers, or edit the prompts.')
     picture, spent, used = done
     return picture, cost + spent, {**used, 'attempts': attempts}
 
 
-def make_cover(story_id: int) -> None:
-    """Write the scene, paint the artwork, and draw the story's cover from it."""
+def make_cover(story_id: int, remake: bool = False) -> None:
+    """Write the scene, paint the artwork, and draw the story's cover from it. `remake` (New AI Cover for a story that
+    already has AI artwork): the image models start with the second one, the first going last, for a different look."""
     from app.models import Story, db
     story = db.session.get(Story, story_id)
     if not story:
@@ -755,8 +830,13 @@ def make_cover(story_id: int) -> None:
     config = settings()
     if not config['api_key']:
         raise ValueError('Add an OpenRouter API key in Settings → AI Covers first.')
+    if remake and len(config['image_models']) > 1:
+        order = config['image_models'][1:] + config['image_models'][:1]
+        config = {**config, 'image_models': order, 'image_model': order[0], 'fallback_models': order[1:]}
+        log_action(f'AI cover for story {story_id} is a remake: image models from {order[0]}')
     _set_progress('Describing the cover')
-    brief, brief_cost = write_brief(story, config['api_key'], config['text_model'])
+    brief, brief_cost = write_brief(story, config['api_key'], config['text_models'])
+    text_model = used_model(config['text_model'])
     _set_progress('Painting the artwork')
     picture, image_cost, used = paint_with_fallbacks(story, brief, config['api_key'], config)
     art, _ = art_paths(story)
@@ -766,11 +846,11 @@ def make_cover(story_id: int) -> None:
         handle.write(picture)
     os.replace(temporary, art)
     total = round(brief_cost + image_cost, 4)
-    _write_notes(story, {'brief': used['brief'], 'text_model': config['text_model'], 'image_model': used['model'],
+    _write_notes(story, {'brief': used['brief'], 'text_model': text_model, 'image_model': used['model'],
                          'lettered': used['lettered'], 'softened': used['softened'], 'attempts': used['attempts'],
                          'cost': total, 'made': datetime.now(timezone.utc).isoformat()})
     apply_cover(story)
-    log_action(f'AI cover made for story {story_id} ({config["text_model"]}, {used["model"]}), cost ${total:.4f}')
+    log_action(f'AI cover made for story {story_id} ({text_model}, {used["model"]}), cost ${total:.4f}')
 
 
 # --- Background worker ----------------------------------------------------------------------
@@ -893,7 +973,10 @@ def parallel_limit() -> int:
     return max(1, min(PARALLEL_MAX, value))
 
 
-def start(app, story_id: int, limit: Optional[int] = None, resume: bool = True) -> str:
+_remakes: set = set()  # Stories whose next cover starts with the second image model (see make_cover).
+
+
+def start(app, story_id: int, limit: Optional[int] = None, resume: bool = True, remake: bool = False) -> str:
     """Queue a cover for the story; returns 'started' or 'queued'. Up to `limit` covers
     (default: the Settings value) are made at the same time, each in its own worker thread.
     While AI work is paused, `resume` (someone asked for this cover) starts every AI queue again;
@@ -905,6 +988,8 @@ def start(app, story_id: int, limit: Optional[int] = None, resume: bool = True) 
     with _lock:
         if story_id in _active:
             raise ValueError('A cover for this story is already being made.')
+        if remake:
+            _remakes.add(story_id)
         if story_id in _queue:
             queued = True
         else:
@@ -979,12 +1064,14 @@ def _work(app) -> None:
                 return
             story_id = _queue.popleft()
             _queued_at.pop(story_id, None)
+            remake = story_id in _remakes
+            _remakes.discard(story_id)
             _active[story_id] = {'progress': 'Starting', 'started': _now()}
             _persist()
         _current.story_id = story_id
         try:
             with app.app_context():
-                make_cover(story_id)
+                make_cover(story_id, remake) if remake else make_cover(story_id)
         except StopError as error:
             # Nothing else could get through either: this story goes back to the front, and AI work pauses.
             log_error(f'AI cover for story {story_id} paused: {error}')
@@ -992,6 +1079,8 @@ def _work(app) -> None:
                 if story_id not in _queue:
                     _queue.appendleft(story_id)
                     _queued_at[story_id] = _now()
+                if remake:
+                    _remakes.add(story_id)
             ai_queues.pause(app, error)
         except Exception as error:
             message = str(error) if isinstance(error, ValueError) else 'Making the cover stopped unexpectedly.'

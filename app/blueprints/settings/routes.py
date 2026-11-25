@@ -744,20 +744,45 @@ def save_ai_cover_settings() -> ResponseReturnValue:
                     'excerpt_label': ai_cover.excerpt_label(ai_cover.settings())})
 
 
+@settings.route('/ai-models', methods=['POST'])
+def save_ai_model_settings() -> ResponseReturnValue:
+    """Settings → AI Models and Story Text: the text models (tried in order) every AI text request uses, and how
+    much story text they read."""
+    from app.services import ai_cover
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    fields = {k: data[k] for k in ('text_model', 'story_text', 'excerpt_percent', 'excerpt_parts', 'excerpt_words') if k in data}
+    try:
+        ai_cover.save_settings(fields)
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 400
+    config = ai_cover.settings()
+    log_action(f"AI model settings saved: text models {', '.join(config['text_models'])}; story text {config['story_text']}")
+    _resume_ai_work('the AI settings were saved')
+    return jsonify({'success': True, 'settings': ai_cover.public_settings(), 'excerpt_label': ai_cover.excerpt_label(config)})
+
+
 @settings.route('/ai-text', methods=['POST'])
 def save_ai_text_settings() -> ResponseReturnValue:
-    """Settings → AI Rewrite and Summaries: the rewrite model, the summary model, and automatic summaries."""
+    """Settings → AI Rewrite and Summaries: the rewrite model, its two automatic options, and automatic summaries.
+    (Summaries use the text models in AI Models and Story Text; an older form's summary_model is still accepted.)"""
     from app.services import ai_rewrite, ai_summary
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         data = {}
     try:
-        rewrite = ai_rewrite.save_settings(str(data.get('rewrite_model') or ''))
-        summaries = ai_summary.save_settings(str(data.get('summary_model') or ''), bool(data.get('summary_auto')))
+        rewrite = ai_rewrite.save_settings(str(data.get('rewrite_model') or ''),
+                                           auto_single=bool(data['rewrite_single']) if 'rewrite_single' in data else None,
+                                           auto_next=bool(data['rewrite_next']) if 'rewrite_next' in data else None)
+        summaries = ai_summary.save_settings(data.get('summary_model'), bool(data.get('summary_auto')))
     except ValueError as e:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 400
-    log_action(f"AI Rewrite and summary settings saved: rewrite {rewrite['model']}, summaries {summaries['model']}"
+    log_action(f"AI Rewrite and summary settings saved: rewrite {rewrite['model']}, "
+               f"single-part downloads {'on' if rewrite['auto_single'] else 'off'}, "
+               f"next part while reading {'on' if rewrite['auto_next'] else 'off'}"
                + (', automatic summaries on' if summaries['auto'] else ''))
     _resume_ai_work('the AI settings were saved')
     return jsonify({'success': True, 'rewrite': rewrite, 'summary': summaries})

@@ -454,6 +454,9 @@ class DownloadQueueWorker:
                 make_after_download(self.app, item.story_id)
                 from .ai_summary import make_after_download as summarize_after_download
                 summarize_after_download(self.app, item.story_id)
+                if item.job_type != 'redownload':  # A new story (Settings → AI Rewrite: single-part stories).
+                    from .ai_rewrite import after_import
+                    after_import(self.app, item.story_id)
 
         except Exception as e:
             error_msg = str(e)

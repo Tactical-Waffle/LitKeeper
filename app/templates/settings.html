@@ -428,6 +428,53 @@
 
   {% if enable_library %}
   <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
+    <section id="aiModelsSection" style="scroll-margin-top:5rem">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
+        <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+        </svg>
+        AI Models and Story Text
+      </h3>
+      <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+        Shared by every AI text request: cover scene descriptions, toned-down scenes and summaries (AI Rewrite keeps its
+        own preset below). Uses the OpenRouter API key from AI Covers.
+      </p>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiTextModels">Text models</label>
+          <input type="text" id="aiTextModels" autocomplete="off" spellcheck="false" value="{{ ai_cover_settings.text_models | join(', ') }}"
+            placeholder="deepseek/deepseek-v4-flash" class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Up to five, separated by commas, tried in order: a model that fails, or answers with nothing usable (an empty reply, or a refusal instead of a description or summary), is logged and the next one is asked. Empty goes back to deepseek/deepseek-v4-flash.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverStoryText">Story text sent to the AI</label>
+          <select id="aiCoverStoryText"
+            class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+            {% for key, option in ai_cover_story_text.items() %}
+            <option value="{{ key }}" {{ 'selected' if ai_cover_settings.story_text == key else '' }}>{{ option[0] }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">What the text models read for cover descriptions, toned-down scenes and summaries. More text lets them see more of the story, at a little more cost per request.</p>
+        </div>
+        <div id="aiCoverExcerptOptions" class="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-gray-700 dark:text-gray-300">
+            <span>All of part 1 plus the first</span>
+            <input type="number" id="aiCoverExcerptPercent" min="1" max="100" step="1" inputmode="numeric" value="{{ ai_cover_settings.excerpt_percent }}" aria-label="Percent of each later part" class="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+            <span>% of the next</span>
+            <input type="number" id="aiCoverExcerptParts" min="1" max="999" step="1" inputmode="numeric" placeholder="all" value="{{ ai_cover_settings.excerpt_parts if ai_cover_settings.excerpt_parts else '' }}" aria-label="How many later parts (blank for all)" class="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+            <span>parts/chapters (up to</span>
+            <input type="number" id="aiCoverExcerptWords" min="1000" max="200000" step="1000" inputmode="numeric" value="{{ ai_cover_settings.excerpt_words }}" aria-label="Word limit" class="w-28 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+            <span>words)</span>
+            <span class="w-full text-xs text-gray-500 dark:text-gray-400">Used when the option above is “All of part 1 plus…”. Leave the number of parts blank to take that share of every later part.</span>
+          </div>
+        <button type="button" id="aiModelsSaveBtn" onclick="saveAiModelSettings()"
+          class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-all duration-200 font-medium text-sm">
+          Save
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <div class="-mx-4 px-4 py-5 border-y border-slate-200/60 dark:border-slate-700/60 md:rounded-lg md:border md:shadow-sm md:mx-0 md:px-6 md:py-6 md:bg-white md:dark:bg-gray-800">
     <section id="aiCoversSection">
       <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
         <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -438,7 +485,7 @@
       </h3>
       <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
         Paint cover artwork for a story with AI through <a href="https://openrouter.ai" target="_blank" rel="noopener" class="text-primary hover:underline">OpenRouter</a>.
-        A text model reads the story and describes a scene; an image model paints it. Uses your own OpenRouter key and credit,
+        A text model (AI Models and Story Text) reads the story and describes a scene; an image model paints it. Uses your own OpenRouter key and credit,
         and sends story text to OpenRouter only when a cover is made. The key is also used by AI Rewrite and Summaries below. Make a cover from a story's window with <span class="font-medium">AI Cover</span>.
       </p>
 
@@ -456,46 +503,14 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverTextModel">Text model (writes the scene)</label>
-            <input type="text" id="aiCoverTextModel" autocomplete="off" value="{{ ai_cover_settings.text_model }}"
-              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverImageModel">Image model (paints it)</label>
-            <input type="text" id="aiCoverImageModel" autocomplete="off" value="{{ ai_cover_settings.image_model }}"
-              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
-          </div>
-        </div>
-
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverFallbacks">Fallback image models (optional, one per line, up to 5)</label>
-          <textarea id="aiCoverFallbacks" rows="2"
-            class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">{{ ai_cover_settings.fallback_models | join('\n') }}</textarea>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Tried in order if the image model refuses or fails.</p>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverImageModels">Image models (paint the scene)</label>
+          <input type="text" id="aiCoverImageModels" autocomplete="off" spellcheck="false" value="{{ ai_cover_settings.image_models | join(', ') }}"
+            placeholder="bytedance-seed/seedream-5-0-flash" class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Up to five, separated by commas, tried in order when one refuses a cover or fails. Different companies' models filter differently, so mixing providers helps. A New AI Cover for a book that already has AI artwork starts with the second model, for a different look. Empty goes back to bytedance-seed/seedream-5-0-flash. The scene is written by the text models in AI Models and Story Text.</p>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverStoryText">How much of the story the text model reads</label>
-            <select id="aiCoverStoryText"
-              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-              {% for key, option in ai_cover_story_text.items() %}
-              <option value="{{ key }}" {{ 'selected' if ai_cover_settings.story_text == key else '' }}>{{ option[0] }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div id="aiCoverExcerptOptions" class="sm:col-span-2 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-gray-700 dark:text-gray-300">
-            <span>All of part 1 plus the first</span>
-            <input type="number" id="aiCoverExcerptPercent" min="1" max="100" step="1" inputmode="numeric" value="{{ ai_cover_settings.excerpt_percent }}" aria-label="Percent of each later part" class="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-            <span>% of the next</span>
-            <input type="number" id="aiCoverExcerptParts" min="1" max="999" step="1" inputmode="numeric" placeholder="all" value="{{ ai_cover_settings.excerpt_parts if ai_cover_settings.excerpt_parts else '' }}" aria-label="How many later parts (blank for all)" class="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-            <span>parts/chapters (up to</span>
-            <input type="number" id="aiCoverExcerptWords" min="1000" max="200000" step="1000" inputmode="numeric" value="{{ ai_cover_settings.excerpt_words }}" aria-label="Word limit" class="w-28 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-            <span>words)</span>
-            <span class="w-full text-xs text-gray-500 dark:text-gray-400">Used when the option above is “All of part 1 plus…”. Leave the number of parts blank to take that share of every later part.</span>
-          </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiCoverLettering">Cover lettering</label>
             <select id="aiCoverLettering"
@@ -591,24 +606,26 @@
         <span class="font-medium">AI Rewrite</span> (in a story's window, or for selected stories) proofreads and copy-edits
         a story one part at a time. The original is always kept: the reader opens the rewrite, with a link to the original,
         and the EPUB keeps the original text. <span class="font-medium">Make Summary</span> writes one or two sentences,
-        shown in the story's window beside the author's own description. A summary costs a small fraction of a cent;
+        shown instead of the author's own description, written by the text models in AI Models and Story Text. A summary costs a small fraction of a cent;
         a rewrite costs about as much as the model charges for the story's words, in and out.
       </p>
       <div class="space-y-3">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3">
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiRewriteModel">Rewrite preset or model</label>
             <input type="text" id="aiRewriteModel" autocomplete="off" spellcheck="false" value="{{ ai_rewrite_settings.model }}"
               class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">A preset such as @preset/redkeeper (the same one RedKeeper uses) brings its own model and prompt. A model name such as anthropic/claude-sonnet-4.5 is sent the AI Rewrite prompt. Empty goes back to @preset/redkeeper.</p>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="aiSummaryModel">Summary model</label>
-            <input type="text" id="aiSummaryModel" autocomplete="off" spellcheck="false" value="{{ ai_summary_settings.model }}"
-              class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary">
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">It reads the same story text as the AI cover's scene description (set above). Empty goes back to deepseek/deepseek-v4-flash.</p>
-          </div>
         </div>
+        <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" id="aiRewriteSingle" {{ 'checked' if ai_rewrite_settings.auto_single else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
+          <span>Rewrite single-part stories when they are imported <span class="block text-xs text-gray-500 dark:text-gray-400">A story with one part, downloaded as a new story, is queued for AI Rewrite.</span></span>
+        </label>
+        <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" id="aiRewriteNext" {{ 'checked' if ai_rewrite_settings.auto_next else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
+          <span>Rewrite the next part while reading <span class="block text-xs text-gray-500 dark:text-gray-400">Halfway through a part of a story with several parts, the next part is rewritten (if it has not been), ahead of other AI Rewrites, so it is usually ready when you get there.</span></span>
+        </label>
         <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
           <input type="checkbox" id="aiSummaryAuto" {{ 'checked' if ai_summary_settings.auto else '' }} class="mt-0.5 rounded border-slate-300 dark:border-gray-600 text-primary focus:ring-primary">
           <span>Make an AI summary for each newly downloaded story</span>
@@ -1174,13 +1191,7 @@
     const button = document.getElementById('aiCoverSaveBtn');
     const body = {
       api_key: document.getElementById('aiCoverKey').value,
-      text_model: document.getElementById('aiCoverTextModel').value,
-      image_model: document.getElementById('aiCoverImageModel').value,
-      fallback_models: document.getElementById('aiCoverFallbacks').value,
-      story_text: document.getElementById('aiCoverStoryText').value,
-      excerpt_percent: document.getElementById('aiCoverExcerptPercent').value,
-      excerpt_parts: document.getElementById('aiCoverExcerptParts').value,
-      excerpt_words: document.getElementById('aiCoverExcerptWords').value,
+      image_model: document.getElementById('aiCoverImageModels').value,
       lettering: document.getElementById('aiCoverLettering').value,
       auto: document.getElementById('aiCoverAuto').checked,
       retry_unlettered: document.getElementById('aiCoverRetryUnlettered').checked,
@@ -1190,13 +1201,25 @@
     const data = await withBusy(button, 'Saving...', () => aiCoverRequest('/settings/ai-covers', body));
     if (!data.success) { showToast(data.message || 'Error saving AI cover settings', 'error'); return; }
     aiCoverKeySaved(data.settings);
-    const storyText = document.getElementById('aiCoverStoryText');
-    const excerptOption = storyText && storyText.querySelector('option[value="excerpts"]');
+    document.getElementById('aiCoverImageModels').value = data.settings.image_models.join(', ');
+    showToast('Saved', 'success');
+  }
+
+  async function saveAiModelSettings() {
+    const button = document.getElementById('aiModelsSaveBtn');
+    const body = {
+      text_model: document.getElementById('aiTextModels').value,
+      story_text: document.getElementById('aiCoverStoryText').value,
+      excerpt_percent: document.getElementById('aiCoverExcerptPercent').value,
+      excerpt_parts: document.getElementById('aiCoverExcerptParts').value,
+      excerpt_words: document.getElementById('aiCoverExcerptWords').value,
+    };
+    const data = await withBusy(button, 'Saving...', () => aiCoverRequest('/settings/ai-models', body));
+    if (!data.success) { showToast(data.message || 'Error saving the AI model settings', 'error'); return; }
+    const excerptOption = document.querySelector('#aiCoverStoryText option[value="excerpts"]');
     if (excerptOption && data.excerpt_label) excerptOption.textContent = data.excerpt_label;
     document.getElementById('aiCoverExcerptParts').value = data.settings.excerpt_parts || '';
-    document.getElementById('aiCoverTextModel').value = data.settings.text_model;
-    document.getElementById('aiCoverImageModel').value = data.settings.image_model;
-    document.getElementById('aiCoverFallbacks').value = data.settings.fallback_models.join('\n');
+    document.getElementById('aiTextModels').value = data.settings.text_models.join(', ');
     showToast('Saved', 'success');
   }
 
@@ -1204,13 +1227,13 @@
     const button = document.getElementById('aiTextSaveBtn');
     const body = {
       rewrite_model: document.getElementById('aiRewriteModel').value,
-      summary_model: document.getElementById('aiSummaryModel').value,
+      rewrite_single: document.getElementById('aiRewriteSingle').checked,
+      rewrite_next: document.getElementById('aiRewriteNext').checked,
       summary_auto: document.getElementById('aiSummaryAuto').checked,
     };
     const data = await withBusy(button, 'Saving...', () => aiCoverRequest('/settings/ai-text', body));
     if (!data.success) { showToast(data.message || 'Error saving', 'error'); return; }
     document.getElementById('aiRewriteModel').value = data.rewrite.model;
-    document.getElementById('aiSummaryModel').value = data.summary.model;
     showToast('Saved', 'success');
   }
 

@@ -40,9 +40,11 @@ def settings() -> dict:
     return {'model': DEFAULT_MODEL, 'auto': False, **(saved if isinstance(saved, dict) else {})}
 
 
-def save_settings(model: str, auto: bool) -> dict:
+def save_settings(model, auto: bool) -> dict:
+    """Summaries no longer have a model of their own: they use the text models in Settings → AI Models and Story Text.
+    A saved model is kept (it is the second text model until those are saved); `model` None keeps it."""
     from app.models import AppConfig, db
-    model = (model or '').strip() or DEFAULT_MODEL
+    model = (model or '').strip() or settings().get('model') or DEFAULT_MODEL
     if len(model) > 120 or not MODEL_NAME.fullmatch(model):
         raise ValueError('Enter an OpenRouter model name, for example deepseek/deepseek-v4-flash.')
     config = AppConfig.query.filter_by(key=KEY).first()
@@ -121,8 +123,31 @@ def tidy(reply: str) -> str:
     return ' '.join(sentences[:2]).strip()
 
 
-def write(story, key: str, model: str) -> tuple[str, float]:
-    """The summary and what it cost."""
+def text_models() -> list:
+    """The text models summaries use (Settings → AI Models and Story Text), tried in order."""
+    from .ai_cover import settings as cover_settings
+    return cover_settings()['text_models']
+
+
+def write(story, key: str, model) -> tuple[str, float, str]:
+    """The summary from the first text model that writes a usable one (`model`: one name or a list), what it cost, and
+    the model that wrote it. A model that fails or returns nothing usable is logged and the next one is asked."""
+    from .ai_cover import StopError
+    models = [model] if isinstance(model, str) else list(model)
+    for index, name in enumerate(models):
+        try:
+            text, cost = _write(story, key, name)
+            return text, cost, name
+        except StopError:
+            raise
+        except ValueError as error:
+            if index == len(models) - 1:
+                raise
+            log_action(f'AI summary for story {story.id}: {name} failed ({error}); trying {models[index + 1]}')
+
+
+def _write(story, key: str, model: str) -> tuple[str, float]:
+    """The summary from one model, and what it cost."""
     from . import ai_prompts
     from .ai_cover import _post, CHAT, story_details
     messages = [{'role': 'system', 'content': ai_prompts.get('summary')},
@@ -141,8 +166,8 @@ def write(story, key: str, model: str) -> tuple[str, float]:
         finish = choice.get('finish_reason') or choice.get('native_finish_reason') or ''
         log_action(f'AI summary from {model} unusable (finish {finish or "none"}): {reply[:200]!r}')
         if finish == 'content_filter':
-            raise ValueError(f"The summary model ({model}) was blocked by its provider's content filter. "
-                             'Choose another model in Settings → AI Summaries.')
+            raise ValueError(f"The text model ({model}) was blocked by its provider's content filter. "
+                             'Add another text model in Settings → AI Models and Story Text.')
         if attempt == 0 and text:
             messages += [{'role': 'assistant', 'content': reply},
                          {'role': 'user', 'content': f'Too long. Rewrite it as at most two sentences and {MAX_WORDS - 15} words.'}]
@@ -150,8 +175,8 @@ def write(story, key: str, model: str) -> tuple[str, float]:
         return ' '.join(text.split()[:MAX_WORDS]).rstrip(',;:') + '…', cost
     if len(text.split()) >= 5:
         return text, cost
-    raise ValueError(f'The summary model ({model}) returned no usable summary. Try again, or choose another '
-                     'model in Settings → AI Summaries.')
+    raise ValueError(f'The text model ({model}) returned no usable summary. Try again, or add another '
+                     'text model in Settings → AI Models and Story Text.')
 
 
 def make(story_id: int) -> None:
@@ -162,8 +187,7 @@ def make(story_id: int) -> None:
     key = api_key()
     if not key:
         raise ValueError('Add an OpenRouter API key in Settings → AI Covers first.')
-    model = settings()['model']
-    text, cost = write(story, key, model)
+    text, cost, model = write(story, key, text_models())
     set_summary(story, text, model, cost)
     _errors.pop(story.id, None)
     log_action(f'AI summary made for story {story_id} with {model}, cost ${cost:.4f}')

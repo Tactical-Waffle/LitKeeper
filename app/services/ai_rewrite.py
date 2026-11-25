@@ -14,6 +14,7 @@ matched to the names the model used for them (such as "Brian"), and later parts 
 "Character names already used…" ahead of their text.
 """
 from __future__ import annotations
+from typing import Optional
 import hashlib
 import html
 import json
@@ -33,6 +34,7 @@ INITIAL = re.compile(r"(?<![\w'’(\[/-])([B-HJ-Z])(?!\s+cups?\b)(?=(?:['’]?s)
 _TAG = re.compile(r'<[^>]+>')
 
 _queue: deque = deque()
+_only: dict = {}   # story id -> part numbers to rewrite (the next part while reading); absent: every part
 _running: dict = {}
 _redo: dict = {}
 _lock = threading.Lock()
@@ -44,11 +46,14 @@ def settings() -> dict:
     from app.models import AppConfig
     config = AppConfig.query.filter_by(key=KEY).first()
     saved = config.get_value() if config else None
-    return {'model': DEFAULT_MODEL, **(saved if isinstance(saved, dict) else {})}
+    return {'model': DEFAULT_MODEL, 'auto_single': False, 'auto_next': False, **(saved if isinstance(saved, dict) else {})}
 
 
-def save_settings(model: str) -> dict:
+def save_settings(model: str, auto_single: Optional[bool] = None, auto_next: Optional[bool] = None) -> dict:
+    """`auto_single`: rewrite single-part stories when they are downloaded as new stories. `auto_next`: while reading,
+    rewrite the next part halfway through the current one. None keeps the saved choice."""
     from app.models import AppConfig, db
+    current = settings()
     model = (model or '').strip() or DEFAULT_MODEL
     if len(model) > 120 or not MODEL_NAME.fullmatch(model):
         raise ValueError('Enter an OpenRouter preset or model, for example @preset/redkeeper.')
@@ -57,7 +62,9 @@ def save_settings(model: str) -> dict:
         config = AppConfig(key=KEY, value_type='json', description='OpenRouter model for AI Rewrite')
         db.session.add(config)
     config.value_type = 'json'
-    config.set_value({'model': model})
+    config.set_value({'model': model,
+                      'auto_single': current['auto_single'] if auto_single is None else bool(auto_single),
+                      'auto_next': current['auto_next'] if auto_next is None else bool(auto_next)})
     db.session.commit()
     return settings()
 
@@ -177,8 +184,14 @@ def _paused() -> str:
 
 # --- Names and checks -----------------------------------------------------------------------
 
+# Letters that are sizes, not names: "double D", "triple-D", "a D cup", "DD tits", "her Ds" before a body word. They are
+# left out before looking for initials, so a rewrite that keeps them is not flagged as "initials left".
+SIZES = re.compile(r"\b(?i:double|triple|quadruple)[\s-]+[A-K]{1,3}(?:['’]?s)?\b"
+                   r"|\b[A-K]{1,4}(?:['’]?s)?(?=[\s-]*(?i:cups?|tits|titties|boobs|breasts|bras?|chest|rack)\b)")
+
+
 def initials(text: str) -> set:
-    return set(INITIAL.findall(text))
+    return set(INITIAL.findall(SIZES.sub(' ', text)))
 
 
 def learn_names(original: str, edited: str, known: dict) -> dict:
@@ -232,9 +245,9 @@ def request(text: str, key: str, model: str, label: str = 'rewrite') -> dict:
             'truncated': choice.get('finish_reason') == 'length'}
 
 
-def rewrite_story(story_id: int, redo: bool = False) -> str:
-    """Rewrite every part that has no current rewrite (or all parts, with redo). Saves after each part.
-    Returns 'done', 'stopped' or 'failed'."""
+def rewrite_story(story_id: int, redo: bool = False, only: Optional[set] = None) -> str:
+    """Rewrite every part that has no current rewrite (or all parts, with redo); with `only`, just those part
+    numbers. Saves after each part. Returns 'done', 'stopped' or 'failed'."""
     from app.models import Story, db
     from .ai_cover import StopError
     story = db.session.get(Story, story_id)
@@ -253,7 +266,8 @@ def rewrite_story(story_id: int, redo: bool = False) -> str:
     chapters = _chapters(story)
     if not chapters:
         raise ValueError('This story has no reader text to rewrite.')
-    todo = [(i, c) for i, c in enumerate(chapters) if _number(c, i) not in current]
+    todo = [(i, c) for i, c in enumerate(chapters) if _number(c, i) not in current
+            and (only is None or _number(c, i) in only)]
     log_action(f'AI Rewrite of "{story.title}": {len(todo)} of {len(chapters)} parts with {model}')
     previous = None
     for position, (index, chapter) in enumerate(todo, 1):
@@ -322,17 +336,27 @@ def rewrite_story(story_id: int, redo: bool = False) -> str:
 
 # --- Queue ----------------------------------------------------------------------------------
 
-def start(app, story_id: int, redo: bool = False, resume: bool = True) -> str:
+def start(app, story_id: int, redo: bool = False, resume: bool = True, only: Optional[set] = None,
+          first: bool = False) -> str:
     """Queue a story; one story is rewritten at a time, separately from downloads and AI covers.
-    While AI work is paused, `resume` (someone asked for it) starts every AI queue again."""
+    While AI work is paused, `resume` (someone asked for it) starts every AI queue again. `only`: just these part
+    numbers (the next part while reading); `first`: ahead of the waiting stories."""
     from . import ai_queues
     with _lock:
         if _running.get('story_id') == story_id:
             raise ValueError('This story is already being rewritten.')
         queued = story_id in _queue
-        if not queued:
-            _queue.append(story_id)
+        if queued:
+            if story_id in _only:  # Already waiting for some parts: add these, or all of them.
+                _only[story_id] = None if only is None or _only[story_id] is None else _only[story_id] | set(only)
+                if _only[story_id] is None:
+                    _only.pop(story_id)
+                _persist()
+        else:
+            (_queue.appendleft if first else _queue.append)(story_id)
             _redo[story_id] = redo
+            if only is not None:
+                _only[story_id] = set(only)
             _persist()
     if ai_queues.paused():
         if resume:
@@ -367,6 +391,7 @@ def _work(app) -> None:
                 return
             story_id = _queue.popleft()
             redo = _redo.pop(story_id, False)
+            only = _only.pop(story_id, None)
             for name in ('stop', 'index', 'total', 'number', 'part_started', 'durations', 'saved'):
                 _running.pop(name, None)
             _running['story_id'] = story_id
@@ -374,7 +399,7 @@ def _work(app) -> None:
         state = 'failed'
         try:
             with app.app_context():
-                state = rewrite_story(story_id, redo)
+                state = rewrite_story(story_id, redo, only) if only is not None else rewrite_story(story_id, redo)
         except StopError as error:
             # Nothing else could get through either. The story goes back to the front of the queue (it carries on
             # after the parts already rewritten), and AI work pauses.
@@ -384,6 +409,8 @@ def _work(app) -> None:
                 if story_id not in _queue:
                     _queue.appendleft(story_id)
                     _redo[story_id] = redo and not _running.get('saved')
+                    if only is not None:
+                        _only[story_id] = only
             ai_queues.pause(app, error)
         except Exception as error:
             message = str(error) if isinstance(error, ValueError) else 'AI Rewrite stopped unexpectedly.'
@@ -413,7 +440,9 @@ def _persist() -> None:
     one goes back without redo, so it continues after the parts already rewritten."""
     from . import ai_queues
     running = [[_running['story_id'], False]] if _running.get('story_id') else []
-    ai_queues.save('rewrite', running + [[i, bool(_redo.get(i))] for i in _queue])
+    # The option is the redo flag, or {"redo", "only"} for a story waiting for just some parts.
+    ai_queues.save('rewrite', running + [[i, {'redo': bool(_redo.get(i)), 'only': sorted(_only[i])} if _only.get(i)
+                                          else bool(_redo.get(i))] for i in _queue])
 
 
 def restore(app) -> None:
@@ -422,13 +451,63 @@ def restore(app) -> None:
     from app.models import Story, db
     with app.app_context():
         items = [i for i in ai_queues.load('rewrite') if db.session.get(Story, i[0])]
-    for story_id, redo in items:
+    for story_id, option in items:
+        only = set(option.get('only') or []) or None if isinstance(option, dict) else None
+        redo = option.get('redo') if isinstance(option, dict) else option
         try:
-            start(app, story_id, bool(redo), resume=False)
+            if only:
+                start(app, story_id, bool(redo), resume=False, only=only)
+            else:
+                start(app, story_id, bool(redo), resume=False)
         except ValueError:
             pass
     if items:
         log_action(f'Restored {len(items)} AI Rewrite {"job" if len(items) == 1 else "jobs"} after a restart')
+
+
+def after_import(app, story_id) -> bool:
+    """Settings → AI Rewrite: rewrite a single-part story when it is downloaded as a new story, if that is turned on.
+    Returns whether it was queued."""
+    from app.models import Story, db
+    if not story_id:
+        return False
+    try:
+        config = settings()
+        story = db.session.get(Story, story_id)
+        if not (config['auto_single'] and api_key() and story and (story.chapter_count or 1) == 1
+                and words_to_rewrite(story)):
+            return False
+        start(app, story.id, resume=False)
+        log_action(f'AI Rewrite queued for new single-part story {story.id}')
+        return True
+    except ValueError:
+        return False
+    except Exception as error:
+        log_error(f'Could not queue AI Rewrite for new story {story_id}: {error}')
+        return False
+
+
+def next_part(app, story, place: int) -> str:
+    """Settings → AI Rewrite: the reader is halfway through the part at `place` (from 1); rewrite the part after it if
+    that is turned on and it has no rewrite yet. Returns what was done, for the reader."""
+    config = settings()
+    if not (config['auto_next'] and api_key()):
+        return 'off'
+    chapters = _chapters(story)
+    if not 1 <= place < len(chapters):
+        return 'last'
+    number = _number(chapters[place], place)
+    if number in edited_parts(story, chapters):
+        return 'done'
+    with _lock:
+        if _running.get('story_id') == story.id:
+            return 'running'  # This story is being rewritten now; the part comes in turn.
+    try:
+        state = start(app, story.id, only={number}, first=True)  # Ahead of whole-story rewrites: it is needed soon.
+    except ValueError:
+        return 'running'
+    log_action(f'AI Rewrite of part {number} of story {story.id} queued while reading')
+    return state
 
 
 def reorder(story_ids: list) -> None:
@@ -453,6 +532,7 @@ def remove(story_id: int) -> bool:
             return False
         _queue.remove(story_id)
         _redo.pop(story_id, None)
+        _only.pop(story_id, None)
         _persist()
     return True
 

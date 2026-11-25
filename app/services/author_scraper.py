@@ -535,7 +535,8 @@ class AuthorScraper:
                 if clean not in seen_story:
                     seen_story.add(clean)
                     results_index[clean] = len(results)
-                    results.append({'url': clean, 'title': slug.replace('-', ' ').title(), 'is_series': False})
+                    from app.utils.titles import title_from_slug
+                    results.append({'url': clean, 'title': title_from_slug(slug), 'is_series': False})
             log_action(f"[AuthorScraper] Phase 0 hydration: found {len(seen_story)} story slugs")
 
         # Phase 1 — DOM-based series detection using Literotica's semantic class names

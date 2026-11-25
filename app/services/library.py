@@ -175,17 +175,16 @@ def get_stories_page(
 
     col_map = {
         'date': Story.created_at,
-        'name': Story.title,
+        'name': Story.title.collate('NATURAL'),  # Numbers in titles by value.
         'length': Story.word_count,
         'rating': Story.rating,
         'last_opened': Story.last_opened_at,
         'community_score': Story.literotica_score,
-        'pages': Story.literotica_page_count,
         'queued': Story.queued_at,
         'views': Story.literotica_views,
         'favorites': Story.literotica_favorites,
     }
-    order_col = col_map.get(sort_by, Story.created_at)
+    order_col = col_map.get(sort_by, Story.created_at)  # A sort no longer offered (Page Count) falls back to Date Added.
     if sort_order == 'desc':
         query = query.order_by(desc(order_col).nullslast())
     else:
