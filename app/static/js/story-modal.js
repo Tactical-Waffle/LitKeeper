@@ -731,6 +731,77 @@ window.toggleStoryQueue = async function(storyId, button) {
   }
 };
 
+// --- Read / unread ---
+
+const READ_BTN_ON = ['bg-emerald-50', 'dark:bg-emerald-900/20', 'text-emerald-700', 'dark:text-emerald-300', 'border-emerald-300', 'dark:border-emerald-700'];
+const READ_BTN_OFF = ['text-slate-600', 'dark:text-slate-300', 'hover:text-slate-900', 'dark:hover:text-white', 'hover:bg-slate-50', 'dark:hover:bg-slate-700/50', 'border-slate-200', 'dark:border-slate-600'];
+
+function applyReadButtonState(button, read) {
+  button.dataset.read = read ? 'true' : 'false';
+  button.setAttribute('aria-pressed', read ? 'true' : 'false');
+  button.title = read ? 'You have read this story — click to mark it unread' : 'Mark this story as read';
+  button.classList.remove(...(read ? READ_BTN_OFF : READ_BTN_ON));
+  button.classList.add(...(read ? READ_BTN_ON : READ_BTN_OFF));
+  const label = button.querySelector('.read-toggle-label');
+  if (label) label.textContent = read ? 'Read · Mark as Unread' : 'Mark as Read';
+}
+
+// The library card shows "Read" (or how far through) under the title; redraw it from the server.
+async function refreshLibraryCard(storyId) {
+  try {
+    const response = await fetch(`/api/story/${storyId}/card`);
+    if (!response.ok) return;
+    const html = await response.text();
+    document.querySelectorAll(`#library-content [hx-get*="/api/story/${storyId}/modal"]`).forEach(card => {
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      const fresh = holder.firstElementChild;
+      if (!fresh) return;
+      card.replaceWith(fresh);
+      if (window.htmx) htmx.process(fresh);
+    });
+  } catch (_) { /* The card catches up on the next library load. */ }
+}
+
+window.toggleStoryRead = async function(storyId, button) {
+  const read = button.dataset.read !== 'true';
+  const buttons = document.querySelectorAll(`.read-toggle-btn[data-story-id="${storyId}"]`);
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    const response = await fetch(`/api/story/${storyId}/read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ read })
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok || !data.success) throw new Error(data.message || `HTTP ${response.status}`);
+    buttons.forEach(b => applyReadButtonState(b, data.read));
+    // Reading a story takes it off the reading queue.
+    if (typeof data.in_queue === 'boolean') {
+      document.querySelectorAll(`.queue-toggle-btn[data-story-id="${storyId}"]`).forEach(b => applyQueueButtonState(b, data.in_queue));
+      updateLibraryCardQueueBadge(storyId, data.in_queue);
+    }
+    showToast(data.read ? 'Marked as read' : 'Marked as unread', 'success');
+    const readFilter = document.getElementById('readStatusFilter');
+    const queueOnly = document.getElementById('queueOnlyInput');
+    if ((readFilter && readFilter.value) || (queueOnly && queueOnly.value === 'true')) refreshLibrary();
+    else refreshLibraryCard(storyId);
+  } catch (error) {
+    console.error('Mark as read error:', error);
+    showToast('Could not change whether the story is read', 'error');
+  } finally {
+    buttons.forEach(b => { b.disabled = false; });
+  }
+};
+
+// Escape closes the story window (the cover viewer, when open, closes first).
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !document.getElementById('storyModal')) return;
+  if (document.getElementById('coverViewer')) return;
+  closeStoryModal();
+});
+
 window.toggleStoryAutoUpdate = async function(storyId, button) {
   const currentlyEnabled = button.dataset.autoUpdateEnabled === 'true';
   const newValue = !currentlyEnabled;

@@ -1193,7 +1193,11 @@ function clearLibraryFilters() {
   });
   const length = document.getElementById('pageLengthFilter');
   if (length) { length.dataset.minPages = ''; length.dataset.maxPages = ''; }
-  try { localStorage.removeItem('library_category'); localStorage.removeItem('library_source'); } catch (_) {}
+  try {
+    localStorage.removeItem('library_category');
+    localStorage.removeItem('library_source');
+    localStorage.removeItem('library_filters');
+  } catch (_) {}
   window._onFilterSelectChange();
 }
 

@@ -1517,6 +1517,7 @@ def get_story_modal(story_id: int) -> ResponseReturnValue:
         'favorites': story.literotica_favorites,
         'comments': story.literotica_comments,
         'in_queue': bool(story.in_queue),
+        'is_read': bool(story.reading_progress and story.reading_progress.is_completed),
         'description': story.description,
         'ai_cover': _ai_cover_info(story),
         'ai_rewrite': _ai_info('ai_rewrite', story),

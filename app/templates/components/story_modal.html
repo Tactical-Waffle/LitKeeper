@@ -213,6 +213,18 @@
         </svg>
         <span class="queue-toggle-label">{{ 'In Queue' if story.in_queue else 'Add to Queue' }}</span>
       </button>
+      {# Mark as Read (or back to unread); reading a story takes it off the reading queue. #}
+      <button type="button"
+              onclick="toggleStoryRead({{ story.id }}, this)"
+              data-story-id="{{ story.id }}"
+              data-read="{{ 'true' if story.is_read else 'false' }}"
+              aria-pressed="{{ 'true' if story.is_read else 'false' }}"
+              class="read-toggle-btn {{ 'col-span-2' if story.source_type != 'custom' else '' }} w-full px-4 py-2.5 text-sm font-medium transition-all duration-200 flex items-center justify-center gap-2 rounded-lg border
+                     {{ 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700' if story.is_read else 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-700/50 border-slate-200 dark:border-slate-600' }}"
+              title="{{ 'You have read this story — click to mark it unread' if story.is_read else 'Mark this story as read' }}">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        <span class="read-toggle-label">{{ 'Read · Mark as Unread' if story.is_read else 'Mark as Read' }}</span>
+      </button>
     </div>
 
     {% if has_html or has_epub %}
@@ -382,9 +394,15 @@
   <div id="storyModalSheet" class="w-full md:w-full md:max-w-4xl md:mx-4 max-h-[88vh] md:max-h-[90vh] bg-white dark:bg-gray-800 rounded-t-2xl md:rounded-xl shadow-2xl overflow-y-auto transform transition-all relative modal-sheet-enter"
        onclick="event.stopPropagation()">
 
-    {# Drag handle — mobile only #}
-    <div id="sheetDragHandle" class="md:hidden sticky top-0 z-20 flex flex-col items-center pt-3 pb-2 bg-white dark:bg-gray-800 cursor-grab active:cursor-grabbing">
+    {# Drag handle and close button — mobile only. It stays at the top while the sheet scrolls, so the
+       window can always be closed (or swiped down from here). #}
+    <div id="sheetDragHandle" class="md:hidden sticky top-0 z-20 flex items-center justify-center h-11 bg-white dark:bg-gray-800 cursor-grab active:cursor-grabbing">
       <div class="w-10 h-1 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
+      <button type="button" onclick="closeStoryModal();"
+              class="absolute right-2 top-1 w-9 h-9 flex items-center justify-center rounded-full text-gray-500 dark:text-gray-400 bg-slate-100 dark:bg-slate-700 hover:text-gray-700 dark:hover:text-gray-200"
+              aria-label="Close">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
     </div>
 
     <button onclick="closeStoryModal();"
@@ -461,6 +479,7 @@ document.body.style.overflow = 'hidden';
   let startY = 0, currentY = 0, scrollTopAtStart = 0, dragging = false;
 
   function onTouchStart(e) {
+    if (e.target.closest('button, a, input, select, textarea')) { dragging = false; return; }
     startY = e.touches[0].clientY;
     currentY = startY;
     scrollTopAtStart = sheet.scrollTop;

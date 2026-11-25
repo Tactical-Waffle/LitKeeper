@@ -1,5 +1,63 @@
 const metadataModal = new MetadataModal();
 
+// The filters in the Filters menu stay as they were left (across visits) until Clear Filters.
+// Sort, source, categories and the queue view are kept under their own keys below.
+const STICKY_FILTERS = { userRatingFilter: 'user_rating', minScoreFilter: 'min_community_score',
+                         readStatusFilter: 'read_status', pageLengthFilter: 'page_length' };
+const PAGE_LENGTHS = { short: ['', '9'], medium: ['10', '50'], long: ['51', ''] };
+
+function savedLibraryFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('library_filters') || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch (_) { return {}; }
+}
+
+function setPageLengthRange(select) {
+  const [min, max] = PAGE_LENGTHS[select.value] || ['', ''];
+  select.dataset.minPages = min;
+  select.dataset.maxPages = max;
+}
+
+function saveLibraryFilters() {
+  const saved = {};
+  for (const [id, key] of Object.entries(STICKY_FILTERS)) {
+    const el = document.getElementById(id);
+    if (el && el.value) saved[key] = el.value;
+  }
+  try {
+    if (Object.keys(saved).length) localStorage.setItem('library_filters', JSON.stringify(saved));
+    else localStorage.removeItem('library_filters');
+  } catch (_) {}
+}
+
+// Put the saved filters back in their menus; returns whether any was applied.
+function applySavedLibraryFilters() {
+  const saved = savedLibraryFilters();
+  let applied = false;
+  for (const [id, key] of Object.entries(STICKY_FILTERS)) {
+    const el = document.getElementById(id);
+    if (!el || !saved[key]) continue;
+    if (![...el.options].some(o => o.value === saved[key])) continue;  // An option that no longer exists.
+    el.value = saved[key];
+    if (id === 'pageLengthFilter') setPageLengthRange(el);
+    applied = true;
+  }
+  return applied;
+}
+
+Object.keys(STICKY_FILTERS).forEach(id => document.getElementById(id)?.addEventListener('change', saveLibraryFilters));
+
+// Searching, sorting and changing the source (htmx requests) keep the page length too: its menu sends a name
+// ("long"), but the library is filtered by pages.
+document.body.addEventListener('htmx:configRequest', event => {
+  if (!String(event.detail.path || '').startsWith('/library/filter')) return;
+  const length = document.getElementById('pageLengthFilter');
+  if (!length) return;
+  if (length.dataset.minPages) event.detail.parameters.min_pages = length.dataset.minPages;
+  if (length.dataset.maxPages) event.detail.parameters.max_pages = length.dataset.maxPages;
+});
+
 function initializeLibraryFilters() {
   const sortBy = document.getElementById('sortBy');
   const sourceFilter = document.getElementById('sourceFilter');
@@ -16,8 +74,9 @@ function initializeLibraryFilters() {
   const savedSource = localStorage.getItem('library_source') || 'all';
   const savedSortOrder = localStorage.getItem('library_sort_order') || 'desc';
   const savedQueueOnly = localStorage.getItem('library_queue_only') === 'true';
+  const savedFilters = applySavedLibraryFilters();
   if (!savedCategories.length && !localStorage.getItem('library_sort_by') && !localStorage.getItem('library_source') &&
-      !localStorage.getItem('library_sort_order') && !savedQueueOnly) {
+      !localStorage.getItem('library_sort_order') && !savedQueueOnly && !savedFilters) {
     const content = document.getElementById('library-content');
     if (content) content.style.visibility = '';  // Nothing to apply: show the first page as it came.
   }
@@ -41,7 +100,7 @@ function initializeLibraryFilters() {
                                savedCategories.length ||
                                localStorage.getItem('library_source') ||
                                localStorage.getItem('library_sort_order') ||
-                               savedQueueOnly;
+                               savedQueueOnly || savedFilters;
   
   if (hasSavedPreferences) {
     document.body.addEventListener('htmx:afterSwap', function onSwap(e) {
