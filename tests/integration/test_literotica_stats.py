@@ -85,9 +85,9 @@ class TestStoryWindow:
 
     def test_rating_stars_only_once_rated(self, client: FlaskClient, stories) -> None:
         unrated = client.get(f"/api/story/{stories['quiet']}/modal").get_data(as_text=True)
-        assert 'class="rate-story-btn  mb-3' in unrated and 'class="hidden flex items-center gap-0.5 mb-3" id="storyRatingWidget"' in unrated
+        assert 'class="rate-story-btn  inline-flex' in unrated and 'class="hidden flex items-center gap-0.5" id="storyRatingWidget"' in unrated
         rated = client.get(f"/api/story/{stories['popular']}/modal").get_data(as_text=True)
-        assert 'class="rate-story-btn hidden' in rated and 'class=" flex items-center gap-0.5 mb-3" id="storyRatingWidget"' in rated
+        assert 'class="rate-story-btn hidden' in rated and 'class=" flex items-center gap-0.5" id="storyRatingWidget"' in rated
 
     def test_no_update_button_for_your_own_stories(self, client: FlaskClient, stories) -> None:
         assert 'Update from Literotica' not in client.get(f"/api/story/{stories['mine']}/modal").get_data(as_text=True)
@@ -174,3 +174,36 @@ class TestCoversTheBrowserKeeps:
         kept = client.get(f"/api/story/{stories['quiet']}/cover?v={version}")
         assert kept.status_code == 200 and 'immutable' in kept.headers['Cache-Control']
         assert client.get(f"/api/story/{stories['quiet']}/cover").headers['Cache-Control'] == 'no-cache'
+
+
+@pytest.mark.integration
+class TestStoryWindowLayout:
+    """From RedKeeper's redesigned story details: facts first, rating and read state, three main buttons, auto-update
+    on one line, and the rest in collapsible groups (AI tools open while AI work runs)."""
+
+    def test_layout(self, client: FlaskClient, add_story) -> None:
+        story_id = add_story('Laid Out', category='Romance', tags=tuple(f'tag{n}' for n in range(12)),
+                             literotica_url='https://www.literotica.com/s/laid-out', word_count=12345, chapter_count=2)
+        html = client.get(f'/api/story/{story_id}/modal').get_data(as_text=True)
+        assert '2 parts' in html and '12.3k words' in html and 'Not read yet' in html
+        assert html.index('story-meta') < html.index('story-status') < html.index('story-main') < html.index('story-groups')
+        assert '>tag9<' in html and '>tag10<' not in html and '+2 more' in html
+        assert 'Turn Off Auto-Update' in html
+        for group in ('data-story-group="ai"', 'data-story-group="edit"', 'data-story-group="files"'):
+            assert group in html
+        assert 'data-story-group="ai" open' not in html
+
+    def test_continue_reading_and_percent(self, app, client: FlaskClient, add_story) -> None:
+        story_id = add_story('Half Read')
+        with app.app_context():
+            from app.models import ReadingProgress, db
+            db.session.add(ReadingProgress(story_id=story_id, percentage=0.42, current_chapter=1, current_paragraph=3))
+            db.session.commit()
+        html = client.get(f'/api/story/{story_id}/modal').get_data(as_text=True)
+        assert '42% read' in html and 'Continue Reading' in html and 'Reset progress' in html
+
+    def test_ai_tools_open_while_ai_work_waits(self, client: FlaskClient, add_story) -> None:
+        story_id = add_story('Busy')
+        with patch('app.services.ai_cover.info', return_value={'queued': True, 'running': False}):
+            html = client.get(f'/api/story/{story_id}/modal').get_data(as_text=True)
+        assert 'data-story-group="ai" open' in html and 'working…' in html

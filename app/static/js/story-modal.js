@@ -743,7 +743,18 @@ function applyReadButtonState(button, read) {
   button.classList.remove(...(read ? READ_BTN_OFF : READ_BTN_ON));
   button.classList.add(...(read ? READ_BTN_ON : READ_BTN_OFF));
   const label = button.querySelector('.read-toggle-label');
-  if (label) label.textContent = read ? 'Read · Mark as Unread' : 'Mark as Read';
+  if (label) label.textContent = read ? 'Mark as Unread' : 'Mark as Read';
+}
+
+// The story window's read state beside the rating.
+function applyReadState(storyId, read) {
+  document.querySelectorAll(`.story-read-state[data-story-id="${storyId}"]`).forEach(state => {
+    state.textContent = read ? '✓ Read' : 'Not read yet';
+    state.classList.toggle('text-emerald-600', read);
+    state.classList.toggle('dark:text-emerald-400', read);
+    state.classList.toggle('text-gray-500', !read);
+    state.classList.toggle('dark:text-gray-400', !read);
+  });
 }
 
 // The library card shows "Read" (or how far through) under the title; redraw it from the server.
@@ -777,6 +788,7 @@ window.toggleStoryRead = async function(storyId, button) {
     try { data = await response.json(); } catch (_) {}
     if (!response.ok || !data.success) throw new Error(data.message || `HTTP ${response.status}`);
     buttons.forEach(b => applyReadButtonState(b, data.read));
+    applyReadState(storyId, data.read);
     // Reading a story takes it off the reading queue.
     if (typeof data.in_queue === 'boolean') {
       document.querySelectorAll(`.queue-toggle-btn[data-story-id="${storyId}"]`).forEach(b => applyQueueButtonState(b, data.in_queue));
@@ -803,6 +815,31 @@ document.addEventListener('keydown', event => {
 });
 
 window.toggleStoryAutoUpdate = async function(storyId, button) {
+  // The story window's one-line auto-update switch (every copy of it: the window is drawn twice).
+  if (button.hasAttribute('data-auto-update-toggle')) {
+    const buttons = document.querySelectorAll(`[data-auto-update-toggle][data-story-id="${storyId}"]`);
+    buttons.forEach(b => { b.disabled = true; });
+    try {
+      const data = await (await fetch(`/api/story/${storyId}/toggle-auto-update`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })).json();
+      if (!data.success) throw new Error(data.message || 'Failed to update auto-update');
+      const on = !!data.auto_update_enabled;
+      buttons.forEach(b => {
+        b.dataset.autoUpdateEnabled = on ? 'true' : 'false';
+        const label = b.querySelector('.auto-update-label');
+        if (label) label.textContent = on ? 'Turn Off Auto-Update' : 'Turn On Auto-Update';
+      });
+      document.querySelectorAll(`.auto-update-state[data-story-id="${storyId}"]`).forEach(state => {
+        state.textContent = on ? 'Checked for new parts on Literotica' : 'Not checked for new parts';
+      });
+      showToast(on ? 'Auto-update enabled for this story' : 'Auto-update disabled for this story', 'success');
+    } catch (error) {
+      console.error('Auto-update toggle error:', error);
+      showToast('Failed to update auto-update status', 'error');
+    } finally {
+      buttons.forEach(b => { b.disabled = false; });
+    }
+    return;
+  }
   const currentlyEnabled = button.dataset.autoUpdateEnabled === 'true';
   const newValue = !currentlyEnabled;
   const labelSpan = button.querySelector('#autoRefreshToggleLabel');

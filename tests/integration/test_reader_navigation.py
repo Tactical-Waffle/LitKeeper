@@ -39,7 +39,7 @@ class TestStoryWindow:
         assert 'toggleStoryRead' in page and 'data-read="false"' in page and 'Mark as Read' in page
         assert client.post(f'/api/story/{story_id}/read', json={'read': True}).get_json()['read'] is True
         page = client.get(f'/api/story/{story_id}/modal').get_data(as_text=True)
-        assert 'data-read="true"' in page and 'Read · Mark as Unread' in page
+        assert 'data-read="true"' in page and 'Mark as Unread' in page and '✓ Read' in page
 
     def test_phones_get_a_close_button(self, add_story, client: FlaskClient) -> None:
         story_id = add_story('Any One')
