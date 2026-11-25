@@ -94,9 +94,10 @@ class TestRewrite:
         assert len(calls2) == 1 and 'Later B called her' in calls2[0]['payload']['messages'][-1]['content']
 
     def test_failure_is_saved_and_stops_the_run(self, app: Flask, story, keyed) -> None:
-        with patch('app.services.ai_cover._post', side_effect=ValueError('OpenRouter reports insufficient credits.')):
+        with patch('app.services.ai_cover._post', side_effect=ValueError('The model took too long to answer.')) as post:
             assert ai_rewrite.rewrite_story(story.id) == 'failed'
-        assert ai_rewrite.status(story)['error'] == 'Part 1: OpenRouter reports insufficient credits.'
+        assert post.call_count == 2  # The part is tried once more before the story stops.
+        assert ai_rewrite.status(story)['error'] == 'Part 1: The model took too long to answer.'
 
     def test_a_changed_original_part_counts_as_not_rewritten(self, app: Flask, story, keyed) -> None:
         calls, fake = rewrite_answers('Brian met her at the bar. Brian smiled and waved at her friend.', 'Later Brian called her. They talked.')
@@ -198,7 +199,7 @@ class TestSummary:
             start.assert_not_called()
             ai_summary.save_settings('', True)
             ai_summary.make_after_download(app, story.id)
-            start.assert_called_once_with(app, story.id)
+            start.assert_called_once_with(app, story.id, resume=False)
 
 
 @pytest.mark.integration
@@ -242,7 +243,7 @@ class TestBulkSettingsAndQueues:
         ai_queues.save('rewrite', [[story.id, True], [999999, False]])
         with patch('app.services.ai_rewrite.start') as start:
             ai_rewrite.restore(app)
-        start.assert_called_once_with(app, story.id, True)  # Deleted stories are dropped.
+        start.assert_called_once_with(app, story.id, True, resume=False)  # Deleted stories are dropped.
 
     def test_deleting_a_story_removes_its_rewrite_and_summary(self, app: Flask, story) -> None:
         ai_summary.set_summary(story, 'A summary to delete.')

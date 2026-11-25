@@ -167,7 +167,12 @@ def status(story) -> dict:
             'running': running, 'queued': queued, 'live': progress() if running else {},
             'error': data.get('error', ''), 'cost': data.get('cost', 0.0), 'tokens': data.get('tokens', 0),
             'model': data.get('model', ''), 'finished': data.get('finished'), 'stopped': data.get('stopped', ''),
-            'configured': bool(api_key())}
+            'configured': bool(api_key()), 'paused': _paused() if queued else ''}
+
+
+def _paused() -> str:
+    from . import ai_queues
+    return ai_queues.paused()
 
 
 # --- Names and checks -----------------------------------------------------------------------
@@ -231,6 +236,7 @@ def rewrite_story(story_id: int, redo: bool = False) -> str:
     """Rewrite every part that has no current rewrite (or all parts, with redo). Saves after each part.
     Returns 'done', 'stopped' or 'failed'."""
     from app.models import Story, db
+    from .ai_cover import StopError
     story = db.session.get(Story, story_id)
     if not story:
         return 'failed'
@@ -265,19 +271,34 @@ def rewrite_story(story_id: int, redo: bool = False) -> str:
         if data['names']:
             hint = ('Character names already used in earlier parts of this story (keep using them): ' +
                     ', '.join(f'{letter} = {name}' for letter, name in sorted(data['names'].items())) + '\n\n')
-        try:
-            answer = request(hint + original, key, model, f'rewrite of story {story.id}, part {number}')
-        except ValueError as error:
-            data['error'] = f'Part {number}: {error}'
-            _save_edits(story, data)
-            log_error(f'AI Rewrite of "{story.title}" stopped at part {number}: {error}')
-            return 'failed'
-        edited = paragraphs_of(answer['text'])
+        # A part that fails (or comes back empty) is tried once more before the story stops. A StopError (key,
+        # credit, OpenRouter unreachable) goes straight up: the queue pauses and this story carries on later.
+        answer, edited, problem, spent = None, [], '', (0, 0.0)
+        for attempt in range(2):
+            try:
+                answer = request(hint + original, key, model, f'rewrite of story {story.id}, part {number}'
+                                 + (' (second try)' if attempt else ''))
+            except StopError:
+                raise  # The parts already rewritten were saved one by one.
+            except ValueError as error:
+                problem = str(error)
+            else:
+                spent = (spent[0] + answer['tokens'], spent[1] + answer['cost'])
+                edited = paragraphs_of(answer['text'])
+                if edited:
+                    break
+                problem = 'the model returned no text'
+            log_action(f'AI Rewrite of "{story.title}", part {number}: {problem}'
+                       + ('; trying the part again' if not attempt else ''))
         if not edited:
-            data['error'] = f'Part {number}: the model returned no text.'
+            data['error'] = (f'Part {number}: {problem.rstrip(".")}.'
+                             + (' The parts before it are kept.' if previous or current else ''))
+            data['tokens'] = data.get('tokens', 0) + spent[0]
+            data['cost'] = round(data.get('cost', 0.0) + spent[1], 6)
             _save_edits(story, data)
-            log_error(f'AI Rewrite of "{story.title}": {data["error"]}')
+            log_error(f'AI Rewrite of "{story.title}" stopped at part {number}: {problem}')
             return 'failed'
+        answer = {**answer, 'tokens': spent[0], 'cost': spent[1]}
         flags = check(text, edited)
         if answer['truncated']:
             flags.insert(0, 'the answer was cut off (the model reached its length limit)')
@@ -291,6 +312,7 @@ def rewrite_story(story_id: int, redo: bool = False) -> str:
         _save_edits(story, data)
         previous = number
         with _lock:
+            _running['saved'] = True
             _running.setdefault('durations', []).append(time.monotonic() - _running.get('part_started', time.monotonic()))
     data['finished'] = datetime.now(timezone.utc).isoformat()
     _save_edits(story, data)
@@ -300,33 +322,52 @@ def rewrite_story(story_id: int, redo: bool = False) -> str:
 
 # --- Queue ----------------------------------------------------------------------------------
 
-def start(app, story_id: int, redo: bool = False) -> str:
-    """Queue a story; one story is rewritten at a time, separately from downloads and AI covers."""
+def start(app, story_id: int, redo: bool = False, resume: bool = True) -> str:
+    """Queue a story; one story is rewritten at a time, separately from downloads and AI covers.
+    While AI work is paused, `resume` (someone asked for it) starts every AI queue again."""
+    from . import ai_queues
     with _lock:
         if _running.get('story_id') == story_id:
             raise ValueError('This story is already being rewritten.')
-        if story_id in _queue:
-            return 'queued'
-        _queue.append(story_id)
-        _redo[story_id] = redo
-        _persist()
-        if _running.get('working'):
-            return 'queued'
+        queued = story_id in _queue
+        if not queued:
+            _queue.append(story_id)
+            _redo[story_id] = redo
+            _persist()
+    if ai_queues.paused():
+        if resume:
+            ai_queues.resume(app, 'AI work was asked for')
+        return 'queued'
+    if queued:
+        return 'queued'
+    return 'started' if kick(app) else 'queued'
+
+
+def kick(app) -> bool:
+    """Start the worker if stories are waiting and it is not running (after a pause). Returns whether it started."""
+    from . import ai_queues
+    if ai_queues.paused():
+        return False
+    with _lock:
+        if _running.get('working') or not _queue:
+            return False
         _running['working'] = True
     threading.Thread(target=_work, args=(app,), daemon=True, name='AIRewrite').start()
-    return 'started'
+    return True
 
 
 def _work(app) -> None:
     from app.models import Story, db
+    from . import ai_queues
+    from .ai_cover import StopError
     while True:
         with _lock:
-            if not _queue:
+            if not _queue or ai_queues.paused():
                 _running.clear()
                 return
             story_id = _queue.popleft()
             redo = _redo.pop(story_id, False)
-            for name in ('stop', 'index', 'total', 'number', 'part_started', 'durations'):
+            for name in ('stop', 'index', 'total', 'number', 'part_started', 'durations', 'saved'):
                 _running.pop(name, None)
             _running['story_id'] = story_id
             _persist()
@@ -334,6 +375,16 @@ def _work(app) -> None:
         try:
             with app.app_context():
                 state = rewrite_story(story_id, redo)
+        except StopError as error:
+            # Nothing else could get through either. The story goes back to the front of the queue (it carries on
+            # after the parts already rewritten), and AI work pauses.
+            log_error(f'AI Rewrite of story {story_id} paused: {error}')
+            state = 'paused'
+            with _lock:
+                if story_id not in _queue:
+                    _queue.appendleft(story_id)
+                    _redo[story_id] = redo and not _running.get('saved')
+            ai_queues.pause(app, error)
         except Exception as error:
             message = str(error) if isinstance(error, ValueError) else 'AI Rewrite stopped unexpectedly.'
             log_error(f'AI Rewrite of story {story_id} failed: {error}')
@@ -373,7 +424,7 @@ def restore(app) -> None:
         items = [i for i in ai_queues.load('rewrite') if db.session.get(Story, i[0])]
     for story_id, redo in items:
         try:
-            start(app, story_id, bool(redo))
+            start(app, story_id, bool(redo), resume=False)
         except ValueError:
             pass
     if items:

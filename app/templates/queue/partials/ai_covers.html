@@ -30,6 +30,14 @@
       {{ running_total }} running · {{ waiting_total }} waiting · runs beside downloads
     </p>
   </div>
+  {% if ai.paused %}
+  <div class="mb-2 px-3 py-2 rounded-lg border border-orange-200 dark:border-orange-800/60 bg-orange-50 dark:bg-orange-900/20 text-xs text-orange-800 dark:text-orange-300 flex flex-wrap items-center gap-x-3 gap-y-1" role="status">
+    <span class="flex-1 min-w-0"><strong>AI work is paused.</strong> {{ ai.paused.reason }}
+      {% if ai.paused.until %}<span class="opacity-80">It tries again by itself at {{ ai.paused.until[11:16] }} UTC.</span>{% endif %}
+      <span class="opacity-80">Nothing waiting was lost.</span></span>
+    <button type="button" onclick="resumeAiWork()" class="flex-shrink-0 px-2 py-1 rounded-md font-semibold bg-orange-600 hover:bg-orange-700 text-white">Resume</button>
+  </div>
+  {% endif %}
 
   <div class="queue-list rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white dark:bg-gray-800 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
     {% for item in ai.covers.running %}

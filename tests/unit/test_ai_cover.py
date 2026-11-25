@@ -335,7 +335,7 @@ class TestMakeCover:
             start.assert_not_called()
             ai_cover.save_settings({'auto': True})
             ai_cover.make_after_download(app, story)
-            start.assert_called_once_with(app, story)
+            start.assert_called_once_with(app, story, resume=False)
 
 
 @pytest.mark.integration

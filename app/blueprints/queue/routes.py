@@ -254,9 +254,11 @@ def _ai_queue() -> dict:
               'rewrite': {'running': running_rewrite, 'waiting': [named(i) for i in rewrite['waiting']]},
               'summary': {'running': named(summaries['running']) if summaries['running'] else None,
                           'waiting': [named(i) for i in summaries['waiting']]}}
+    from app.services import ai_queues
     result['busy'] = bool(covers['running'] or covers['waiting'] or running_rewrite or rewrite['waiting']
                           or summaries['running'] or summaries['waiting'])
-    result['shown'] = result['busy'] or bool(failed)
+    result['paused'] = ai_queues.pause_info()
+    result['shown'] = result['busy'] or bool(failed) or bool(result['paused'])
     return result
 
 
@@ -291,6 +293,15 @@ def ai_covers_partial() -> ResponseReturnValue:
     except Exception as e:
         log_error(f"Error rendering the AI queue: {str(e)}")
         return '<div class="text-red-600 dark:text-red-400 text-sm">Error loading the AI queue</div>', 500
+
+
+@queue.route('/api/ai/resume', methods=['POST'])
+def resume_ai() -> ResponseReturnValue:
+    """Resume: start the AI work paused after OpenRouter refused the key, ran out of credit or could not be reached."""
+    from flask import current_app
+    from app.services import ai_queues
+    was = ai_queues.resume(current_app._get_current_object(), 'resumed by hand')
+    return jsonify({'success': True, 'was_paused': was})
 
 
 @queue.route('/api/order', methods=['POST'])

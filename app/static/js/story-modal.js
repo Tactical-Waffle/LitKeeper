@@ -1194,6 +1194,11 @@ document.body.addEventListener('coverRegenerated', function(evt) {
     status.replaceChildren();
     if (info.running) {
       status.textContent = `Making the AI cover: ${info.progress || 'starting'}…`;
+    } else if (info.queued && info.paused) {
+      const span = document.createElement('span');
+      span.className = 'text-orange-700 dark:text-orange-400';
+      span.textContent = `AI cover waiting: AI work is paused. ${info.paused} Press Resume on the Queue page to try again.`;
+      status.appendChild(span);
     } else if (info.queued) {
       status.textContent = 'AI cover waiting its turn…';
     } else if (info.error) {
@@ -1207,31 +1212,50 @@ document.body.addEventListener('coverRegenerated', function(evt) {
     status.classList.toggle('hidden', !status.textContent);
   }
 
+  // A reply as JSON; a server error page (HTML) becomes { success: false } with its status.
+  async function readJson(response) {
+    try { return await response.json(); } catch { return { success: false, message: `LitKeeper answered with error ${response.status}` }; }
+  }
+
   function refreshCovers(storyId) {
     if (window.htmx) htmx.trigger(document.body, 'coverRegenerated', { storyId });
   }
 
-  window.pollAiCover = function (storyId) {
+  // Checks every 3 s while the cover is being made, more slowly while AI work is paused, and backs off when
+  // LitKeeper does not answer (stopping after about five minutes without an answer).
+  let pollFailures = 0;
+  window.pollAiCover = function (storyId, delay = 3000) {
     clearTimeout(pollTimer);
     pollTimer = setTimeout(async () => {
       if (!document.getElementById('aiCoverControls')) return;  // The story window was closed.
       try {
-        const info = await (await fetch(`/api/story/${storyId}/ai-cover`)).json();
+        const response = await fetch(`/api/story/${storyId}/ai-cover`);
+        if (response.status === 404) return;  // The story was deleted.
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const info = await response.json();
+        pollFailures = 0;
         setAiCoverStatus(info);
-        if (info.running || info.queued) { window.pollAiCover(storyId); return; }
+        if (info.running || info.queued) { window.pollAiCover(storyId, info.paused ? 15000 : 3000); return; }
         refreshCovers(storyId);
         showToast(info.error ? 'The AI cover could not be made' : 'AI cover ready', info.error ? 'error' : 'success');
       } catch {
-        window.pollAiCover(storyId);
+        pollFailures += 1;
+        if (pollFailures > 20) {
+          const status = document.getElementById('aiCoverStatus');
+          if (status) { status.textContent = 'Lost contact with LitKeeper. Reopen the story to check on the cover.'; status.classList.remove('hidden'); }
+          pollFailures = 0;
+          return;
+        }
+        window.pollAiCover(storyId, Math.min(30000, 3000 * 2 ** Math.min(pollFailures, 4)));
       }
-    }, 3000);
+    }, delay);
   };
 
   window.startAiCover = async function (storyId) {
     const button = document.getElementById('aiCoverBtn');
     if (button) button.disabled = true;
     try {
-      const data = await (await fetch(`/api/story/${storyId}/ai-cover`, { method: 'POST' })).json();
+      const data = await readJson(await fetch(`/api/story/${storyId}/ai-cover`, { method: 'POST' }));
       if (!data.success) {
         showToast(data.message || 'Could not start the AI cover', 'error');
         if (button) button.disabled = false;
@@ -1248,7 +1272,7 @@ document.body.addEventListener('coverRegenerated', function(evt) {
   window.usePlainCover = async function (storyId) {
     if (!confirm('Delete the AI artwork and go back to the plain cover?')) return;
     try {
-      const data = await (await fetch(`/api/story/${storyId}/ai-cover/plain`, { method: 'POST' })).json();
+      const data = await readJson(await fetch(`/api/story/${storyId}/ai-cover/plain`, { method: 'POST' }));
       if (!data.success) { showToast(data.message || 'Could not change the cover', 'error'); return; }
       setAiCoverStatus(data);
       refreshCovers(storyId);

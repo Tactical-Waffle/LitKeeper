@@ -13,6 +13,7 @@ unless an API key is saved.
 """
 from __future__ import annotations
 import base64
+import http.client
 import io
 import json
 import os
@@ -239,6 +240,7 @@ def info(story) -> dict:
         'has_art': os.path.exists(art),
         'running': running, 'queued': queued, 'progress': progress,
         'configured': bool(settings()['api_key']),
+        'paused': _paused() if queued else '',
         'error': notes.get('error', ''),
         'cost': notes.get('cost'),
         'made': notes.get('made', ''),
@@ -247,6 +249,11 @@ def info(story) -> dict:
         'lettered': bool(notes.get('lettered')),
         'softened': bool(notes.get('softened')),
     }
+
+
+def _paused() -> str:
+    from . import ai_queues
+    return ai_queues.paused()
 
 
 def apply_cover(story) -> None:
@@ -287,7 +294,18 @@ def use_plain_cover(story) -> None:
 # --- OpenRouter -----------------------------------------------------------------------------
 
 class StopError(ValueError):
-    """A failure another model or prompt cannot fix (key refused, no credit, OpenRouter unreachable)."""
+    """A failure another model or prompt cannot fix (key refused, no credit, OpenRouter unreachable).
+    It pauses every AI queue (ai_queues.pause); `wait` is how many seconds until they try again by themselves
+    (None: only when someone starts AI work again or saves the AI settings)."""
+
+    def __init__(self, message: str, wait: Optional[int] = None):
+        super().__init__(message)
+        self.wait = wait
+
+
+UNREACHABLE_WAIT = 300   # seconds before paused AI work tries OpenRouter again after it could not be reached
+RETRY_STATUS = {408, 429, 500, 502, 503, 504, 520, 522, 524, 529}
+ATTEMPTS = 3
 
 
 REFUSAL = re.compile(r'moderat|content (?:policy|filter)|safety|blocked|flagged|sensitive|nsfw|inappropriate|'
@@ -319,59 +337,149 @@ def _log_call(method: str, url: str, status: object, started: float, number: int
 
 def _record_call(url: str, payload: dict, ok: bool, status, result: Optional[dict] = None,
                  kind: Optional[str] = None) -> None:
-    """Settings → AI Statistics: one finished OpenRouter call (what for, the model, its cost, whether it worked)."""
-    from . import ai_stats
-    kind = kind or ('cover_image' if url == IMAGES else 'cover_text')
-    cost = float(((result or {}).get('usage') or {}).get('cost') or 0)
-    ai_stats.record(kind, (result or {}).get('model') or payload.get('model') or '', cost, ok, str(status))
+    """Settings → AI Statistics: one finished OpenRouter call (what for, the model, its cost, whether it worked).
+    Never raises: a statistic that could not be saved must not fail the call it describes."""
+    try:
+        from . import ai_stats
+        kind = kind or ('cover_image' if url == IMAGES else 'cover_text')
+        cost = float(((result or {}).get('usage') or {}).get('cost') or 0)
+        ai_stats.record(kind, (result or {}).get('model') or payload.get('model') or '', cost, ok, str(status))
+    except Exception as error:
+        log_error(f'Could not record an OpenRouter call in the AI statistics: {error}')
+
+
+def _retry_delay(attempt: int, error=None) -> float:
+    """Seconds to wait before the next try: OpenRouter's Retry-After when it sends one (at most a minute),
+    otherwise 10 s, then 20 s."""
+    try:
+        wanted = float(error.headers.get('Retry-After')) if error is not None and error.headers else 0
+    except (TypeError, ValueError, AttributeError):
+        wanted = 0
+    return min(60.0, wanted) if wanted > 0 else 10.0 * (attempt + 1)
+
+
+def _answer_error(result: dict) -> Optional[dict]:
+    """The error in a reply that came back with status 200: OpenRouter puts provider failures in the body
+    (`error`), or in the first choice. Returns {'code', 'message'} or None."""
+    error = result.get('error')
+    if not error:
+        choice = (result.get('choices') or [{}])[0] if isinstance(result.get('choices'), list) else {}
+        error = choice.get('error') if isinstance(choice, dict) else None
+        if not error and isinstance(choice, dict) and choice.get('finish_reason') == 'error':
+            error = {'message': 'the provider stopped with an error'}
+    if not error:
+        return None
+    if not isinstance(error, dict):
+        return {'code': None, 'message': str(error)}
+    code = error.get('code')
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        pass
+    message = str(error.get('message') or 'request failed')
+    raw = (error.get('metadata') or {}).get('raw') if isinstance(error.get('metadata'), dict) else None
+    if raw and isinstance(raw, str) and raw not in message:
+        message += f' ({raw[:200]})'
+    return {'code': code, 'message': message}
+
+
+def _failure(code, detail: str, model: str) -> ValueError:
+    """The error to raise for a request OpenRouter turned down, with what to do about it."""
+    if code == 401 or (code == 403 and not REFUSAL.search(detail)):
+        return StopError('OpenRouter refused the API key. Check it in Settings → AI Covers '
+                         '(the key is shared by every AI feature).')
+    if code == 402:
+        return StopError('OpenRouter reports insufficient credits. Top up at openrouter.ai/settings/credits, '
+                         'then press Resume on the Queue page.')
+    if re.search(r'not a valid model|model.{0,40}(?:not found|does not exist)|unknown model', detail, re.I):
+        return ValueError(f'OpenRouter has no model called "{model}". Check the name in Settings.')
+    if re.search(r'no endpoints found', detail, re.I):
+        return ValueError(f'No provider on OpenRouter can run "{model}" for this request ({detail}). '
+                          'Choose another model in Settings.')
+    if code in (408, 504, 524) or re.search(r'timed? ?out', detail, re.I):
+        return ValueError(f'The model ({model}) took too long to answer. Try again, or choose a faster model.')
+    if code in (429,):
+        return ValueError(f'OpenRouter is rate limiting {model} right now. Try again in a few minutes.')
+    if isinstance(code, int) and code >= 500:
+        return ValueError(f'OpenRouter or its provider for {model} had a problem (error {code}'
+                          f'{": " + detail if detail else ""}). Try again later.')
+    label = f'error {code}' if code else 'error'
+    return ValueError(f'OpenRouter {label}{": " + detail if detail else ""}')
 
 
 def _post(url: str, payload: dict, api_key: str, timeout: int = 300, kind: Optional[str] = None,
           label: str = '') -> dict:
-    """One OpenRouter request, with bounded retries for rate limits and server errors. `kind` is what the call
-    counts as in Settings → AI Statistics (default: a cover's description or picture); `label` says in the log
-    what it is for. The API key travels in a header and is never logged."""
+    """One OpenRouter request, with bounded retries for rate limits, server errors, dropped connections and
+    replies that could not be read. `kind` is what the call counts as in Settings → AI Statistics (default: a
+    cover's description or picture); `label` says in the log what it is for. The API key travels in a header
+    and is never logged.
+
+    Raises StopError when no request could succeed (key refused, no credit, OpenRouter unreachable), and
+    ValueError, with a message for the story window, for any other failure."""
+    from .logger import log_api_call_started
     body = json.dumps(payload).encode()
-    for attempt in range(3):
+    model = payload.get('model') or ''
+    for attempt in range(ATTEMPTS):
+        last = attempt == ATTEMPTS - 1
         request = urllib.request.Request(url, data=body, method='POST', headers=_headers(api_key))
-        from .logger import log_api_call_started
         # The JSON sent goes on an "API data" line (Settings → Logs can hide it); the key is in a header, never logged.
         number = log_api_call_started('OpenRouter', 'POST', _endpoint(url) + (f' ({label})' if label else ''), payload)
         started = time.perf_counter()
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                result = json.loads(response.read().decode())
+                raw = response.read()
+            try:
+                result = json.loads(raw.decode('utf-8', errors='replace'))
+                if not isinstance(result, dict):
+                    raise ValueError('not an object')
+            except ValueError:
+                _log_call('POST', url, 'unreadable reply', started, number)
+                _record_call(url, payload, False, 'unreadable reply', kind=kind)
+                log_error(f'OpenRouter sent a reply that is not JSON ({label or _endpoint(url)}): {raw[:200]!r}')
+                if not last:
+                    time.sleep(_retry_delay(attempt))
+                    continue
+                raise ValueError(f'OpenRouter sent a reply LitKeeper could not read (model {model}). Try again.')
             _log_call('POST', url, 200, started, number)
+            problem = _answer_error(result)
             # A picture call that returns no picture is a failure too (usually a quiet refusal).
-            usable = not result.get('error') and (url != IMAGES or bool((result.get('data') or [{}])[0].get('b64_json')))
+            usable = not problem and (url != IMAGES or bool((result.get('data') or [{}])[0].get('b64_json')))
             _record_call(url, payload, usable, 200 if usable else 'no usable answer', result, kind)
-            if result.get('error'):
-                raise ValueError(f"OpenRouter: {result['error'].get('message', 'request failed')}")
+            if problem:
+                if problem['code'] in RETRY_STATUS and not last:
+                    log_action(f'OpenRouter {label or _endpoint(url)}: {problem["message"]}; trying again')
+                    time.sleep(_retry_delay(attempt))
+                    continue
+                raise _failure(problem['code'], problem['message'], model)
             return result
         except urllib.error.HTTPError as error:
             _log_call('POST', url, error.code, started, number)
             _record_call(url, payload, False, error.code, kind=kind)
             detail = ''
             try:
-                detail = json.loads(error.read().decode()).get('error', {}).get('message', '')
+                detail = _answer_error(json.loads(error.read().decode()))['message']
             except Exception:
                 pass
-            if error.code in (429, 500, 502, 503, 504) and attempt < 2:
-                time.sleep(10 * (attempt + 1))
+            if error.code in RETRY_STATUS and not last:
+                time.sleep(_retry_delay(attempt, error))
                 continue
-            if error.code == 401 or (error.code == 403 and not REFUSAL.search(detail)):
-                raise StopError('OpenRouter refused the API key. Check it in Settings → AI Covers (the key is shared by every AI feature).')
-            if error.code == 402:
-                raise StopError('OpenRouter reports insufficient credits. Top up at openrouter.ai/settings/credits.')
-            raise ValueError(f'OpenRouter error {error.code}{": " + detail if detail else ""}')
-        except (urllib.error.URLError, TimeoutError) as error:
+            raise _failure(error.code, detail, model)
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as error:
+            # Includes timeouts, refused or dropped connections and replies cut off part way.
+            reason = getattr(error, 'reason', None) or error.__class__.__name__
+            if isinstance(error, TimeoutError) or 'timed out' in str(reason):
+                reason = f'no answer within {timeout} seconds'
             _log_call('POST', url, 'unreachable', started, number)
             _record_call(url, payload, False, 'unreachable', kind=kind)
-            if attempt < 2:
-                time.sleep(10 * (attempt + 1))
+            if not last:
+                time.sleep(_retry_delay(attempt))
                 continue
-            raise StopError(f'Could not reach OpenRouter: {getattr(error, "reason", error)}')
-    raise StopError('OpenRouter did not answer.')
+            if 'no answer within' in str(reason):
+                raise ValueError(f'The model ({model}) gave no answer within {timeout} seconds, {ATTEMPTS} times. '
+                                 'Try again, or choose a faster model.')
+            raise StopError(f'Could not reach OpenRouter ({reason}). AI work will try again in '
+                            f'{UNREACHABLE_WAIT // 60} minutes.', wait=UNREACHABLE_WAIT)
+    raise StopError('OpenRouter did not answer.', wait=UNREACHABLE_WAIT)
 
 
 def _get(path: str, api_key: str = '') -> tuple[int, dict]:
@@ -725,7 +833,7 @@ def restore(app) -> None:
         limit = parallel_limit()
     for story_id, _ in items:
         try:
-            start(app, story_id, limit)
+            start(app, story_id, limit, resume=False)
         except ValueError:
             pass
     if items:
@@ -785,9 +893,12 @@ def parallel_limit() -> int:
     return max(1, min(PARALLEL_MAX, value))
 
 
-def start(app, story_id: int, limit: Optional[int] = None) -> str:
+def start(app, story_id: int, limit: Optional[int] = None, resume: bool = True) -> str:
     """Queue a cover for the story; returns 'started' or 'queued'. Up to `limit` covers
-    (default: the Settings value) are made at the same time, each in its own worker thread."""
+    (default: the Settings value) are made at the same time, each in its own worker thread.
+    While AI work is paused, `resume` (someone asked for this cover) starts every AI queue again;
+    without it (a cover made after a download) the story only waits in the queue."""
+    from . import ai_queues
     global _workers
     if limit is None:
         limit = parallel_limit()
@@ -795,15 +906,38 @@ def start(app, story_id: int, limit: Optional[int] = None) -> str:
         if story_id in _active:
             raise ValueError('A cover for this story is already being made.')
         if story_id in _queue:
-            return 'queued'
-        _queue.append(story_id)
-        _queued_at[story_id] = _now()
-        _persist()
+            queued = True
+        else:
+            queued = False
+            _queue.append(story_id)
+            _queued_at[story_id] = _now()
+            _persist()
+    if ai_queues.paused():
+        if resume:
+            ai_queues.resume(app, 'AI work was asked for')
+        return 'queued'
+    if queued:
+        return 'queued'
+    with _lock:
         if _workers >= limit:
             return 'queued'
         _workers += 1
     threading.Thread(target=_work, args=(app,), daemon=True, name='AICovers').start()
     return 'started'
+
+
+def kick(app) -> None:
+    """Start workers for covers waiting in the queue (after a pause, or a restart)."""
+    from . import ai_queues
+    global _workers
+    if ai_queues.paused():
+        return
+    limit = parallel_limit()
+    with _lock:
+        wanted = max(0, min(limit, len(_queue)) - _workers)
+        _workers += wanted
+    for _ in range(wanted):
+        threading.Thread(target=_work, args=(app,), daemon=True, name='AICovers').start()
 
 
 def make_after_download(app, story_id: Optional[int]) -> None:
@@ -818,7 +952,7 @@ def make_after_download(app, story_id: Optional[int]) -> None:
         story = db.session.get(Story, story_id)
         if not story or os.path.exists(art_paths(story)[0]):
             return
-        start(app, story_id)
+        start(app, story_id, resume=False)
         log_action(f'AI cover queued for new story {story_id}')
     except ValueError:
         pass  # Already being made.
@@ -829,6 +963,7 @@ def make_after_download(app, story_id: Optional[int]) -> None:
 def _work(app) -> None:
     """One worker: makes covers from the queue one after another until it's empty.
     Several of these run side by side (see start)."""
+    from . import ai_queues
     global _workers
     while True:
         try:
@@ -837,9 +972,9 @@ def _work(app) -> None:
         except Exception:
             limit = DEFAULTS['parallel']
         with _lock:
-            # Stop when the queue is empty, or when there are more workers than the
-            # Settings value now allows (it was lowered while covers were being made).
-            if not _queue or _workers > limit:
+            # Stop when the queue is empty, when AI work is paused, or when there are more workers than
+            # the Settings value now allows (it was lowered while covers were being made).
+            if not _queue or _workers > limit or ai_queues.paused():
                 _workers -= 1
                 return
             story_id = _queue.popleft()
@@ -850,6 +985,14 @@ def _work(app) -> None:
         try:
             with app.app_context():
                 make_cover(story_id)
+        except StopError as error:
+            # Nothing else could get through either: this story goes back to the front, and AI work pauses.
+            log_error(f'AI cover for story {story_id} paused: {error}')
+            with _lock:
+                if story_id not in _queue:
+                    _queue.appendleft(story_id)
+                    _queued_at[story_id] = _now()
+            ai_queues.pause(app, error)
         except Exception as error:
             message = str(error) if isinstance(error, ValueError) else 'Making the cover stopped unexpectedly.'
             log_error(f'AI cover for story {story_id} failed: {message}'

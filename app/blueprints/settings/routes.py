@@ -712,6 +712,17 @@ def test_saved_notification(connection_id: str) -> ResponseReturnValue:
 
 # --- AI covers -----------------------------------------------------------------------------
 
+def _resume_ai_work(why: str) -> None:
+    """A new key or model may fix what paused the AI work, so saving the settings tries again."""
+    from flask import current_app
+    from app.services import ai_queues
+    try:
+        if ai_queues.paused():
+            ai_queues.resume(current_app._get_current_object(), why)
+    except Exception as e:
+        log_error(f"Could not resume AI work: {e}")
+
+
 @settings.route('/ai-covers', methods=['POST'])
 def save_ai_cover_settings() -> ResponseReturnValue:
     from app.services import ai_cover
@@ -728,6 +739,7 @@ def save_ai_cover_settings() -> ResponseReturnValue:
         log_error(f"Error saving AI cover settings: {str(e)}\n{traceback.format_exc()}")
         return jsonify({'success': False, 'message': 'Error saving AI cover settings'}), 500
     log_action("AI cover settings updated")
+    _resume_ai_work('the AI settings were saved')
     return jsonify({'success': True, 'settings': ai_cover.public_settings(),
                     'excerpt_label': ai_cover.excerpt_label(ai_cover.settings())})
 
@@ -747,6 +759,7 @@ def save_ai_text_settings() -> ResponseReturnValue:
         return jsonify({'success': False, 'message': str(e)}), 400
     log_action(f"AI Rewrite and summary settings saved: rewrite {rewrite['model']}, summaries {summaries['model']}"
                + (', automatic summaries on' if summaries['auto'] else ''))
+    _resume_ai_work('the AI settings were saved')
     return jsonify({'success': True, 'rewrite': rewrite, 'summary': summaries})
 
 

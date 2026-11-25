@@ -156,6 +156,16 @@
     htmx.ajax('GET', '/queue/partials/ai-covers', { target: '#aiCoverQueue', swap: 'innerHTML' });
   }
 
+  async function resumeAiWork() {
+    try {
+      const data = await (await fetch('/queue/api/ai/resume', { method: 'POST' })).json();
+      window.toast?.show(data.success ? 'AI work resumed' : 'Could not resume AI work', data.success ? 'success' : 'error');
+    } catch {
+      window.toast?.show('Request failed', 'error');
+    }
+    htmx.ajax('GET', '/queue/partials/ai-covers', { target: '#aiCoverQueue', swap: 'innerHTML' });
+  }
+
   async function resumeDownloads() {
     try {
       const data = await (await fetch('/queue/api/downloads/resume', { method: 'POST' })).json();

@@ -43,7 +43,11 @@
   async function post(url, body) {
     try {
       const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      return await response.json();
+      try {
+        return await response.json();
+      } catch {
+        return { success: false, message: `LitKeeper answered with error ${response.status}` };
+      }
     } catch {
       return { success: false, message: 'Could not reach LitKeeper' };
     }
@@ -51,13 +55,19 @@
 
   function money(value) { return value ? ` · $${Number(value).toFixed(4)}` : ''; }
 
-  // Check again while a rewrite or summary is queued or running; say so when it ends.
-  function poll(kind, storyId) {
+  // Check again while a rewrite or summary is queued or running; say so when it ends. Checks slow down while
+  // AI work is paused, and back off when LitKeeper does not answer (giving up after about five minutes).
+  const failures = {};
+  function poll(kind, storyId, delay) {
     clearTimeout(timers[kind]);
     timers[kind] = setTimeout(async () => {
       if (!boxes(kind, storyId).length) return;  // The story window was closed or shows another story.
       try {
-        const info = await (await fetch(`/api/story/${storyId}/ai-${kind}`)).json();
+        const response = await fetch(`/api/story/${storyId}/ai-${kind}`);
+        if (response.status === 404) return;  // The story was deleted.
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const info = await response.json();
+        failures[kind] = 0;
         (kind === 'rewrite' ? drawRewrite : drawSummary)(storyId, info);
         if (!(info.running || info.queued)) {
           const failed = !!info.error;
@@ -65,14 +75,23 @@
                                    : (failed ? 'The summary could not be written' : 'Summary ready'), failed ? 'error' : 'success');
         }
       } catch {
-        poll(kind, storyId);
+        failures[kind] = (failures[kind] || 0) + 1;
+        if (failures[kind] > 20) {
+          failures[kind] = 0;
+          boxes(kind, storyId).forEach(box => setStatus(box.querySelector('.ai-status'),
+            ['Lost contact with LitKeeper. Reopen the story to check again.'], true));
+          return;
+        }
+        poll(kind, storyId, Math.min(30000, 3000 * 2 ** Math.min(failures[kind], 4)));
       }
-    }, kind === 'rewrite' ? 5000 : 3000);
+    }, delay || (kind === 'rewrite' ? 5000 : 3000));
   }
+
+  const PAUSED_HINT = 'Press Resume on the Queue page to try again.';
 
   function drawRewrite(storyId, info) {
     boxes('rewrite', storyId).forEach(container => drawRewriteInto(container, storyId, info));
-    if (info.running || info.queued) poll('rewrite', storyId);
+    if (info.running || info.queued) poll('rewrite', storyId, info.paused ? 15000 : 0);
   }
 
   function drawRewriteInto(container, storyId, info) {
@@ -94,7 +113,7 @@
       if (live.stopping) lines.push('Stopping after this part…');
       else box.appendChild(makeButton('Stop After This Part', PLAIN_BUTTON, 'Parts already rewritten are kept', () => act('stop')));
     } else if (info.queued) {
-      lines.push('AI Rewrite is waiting its turn.');
+      lines.push(info.paused ? `AI Rewrite is waiting: AI work is paused. ${info.paused} ${PAUSED_HINT}` : 'AI Rewrite is waiting its turn.');
       box.appendChild(makeButton('Take Out of Queue', PLAIN_BUTTON, '', () => act('remove')));
     } else {
       if (!info.configured) {
@@ -134,7 +153,7 @@
     // The AI summary replaces the description from Literotica; clearing it brings the description back.
     document.querySelectorAll('.story-description-text').forEach(p => p.classList.toggle('hidden', !!info.summary));
     boxes('summary', storyId).forEach(container => drawSummaryInto(container, storyId, info));
-    if (info.running || info.queued) poll('summary', storyId);
+    if (info.running || info.queued) poll('summary', storyId, info.paused ? 15000 : 0);
   }
 
   function drawSummaryInto(container, storyId, info) {
@@ -150,7 +169,7 @@
     if (info.running) {
       line = 'Writing a summary…';
     } else if (info.queued) {
-      line = 'A summary is waiting to be written.';
+      line = info.paused ? `A summary is waiting: AI work is paused. ${info.paused} ${PAUSED_HINT}` : 'A summary is waiting to be written.';
       box.appendChild(makeButton('Take Out of Queue', PLAIN_BUTTON, '', () => act('remove')));
     } else {
       const b = makeButton(info.summary ? 'New Summary' : 'Make Summary', AI_BUTTON,

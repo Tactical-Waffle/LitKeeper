@@ -175,7 +175,7 @@ def make_after_download(app, story_id: Optional[int]) -> None:
         return
     try:
         if settings().get('auto') and api_key():
-            start(app, story_id)
+            start(app, story_id, resume=False)
     except ValueError:
         pass
     except Exception as e:
@@ -189,31 +189,53 @@ def info(story) -> dict:
         running = _running.get('story_id') == story.id
         queued = story.id in _queue
     data = saved(story)
+    from . import ai_queues
     return {'summary': data.get('text', ''), 'model': data.get('model', ''), 'cost': data.get('cost'),
-            'running': running, 'queued': queued, 'error': _errors.get(story.id, ''), 'configured': bool(api_key())}
+            'running': running, 'queued': queued, 'error': _errors.get(story.id, ''), 'configured': bool(api_key()),
+            'paused': ai_queues.paused() if queued else ''}
 
 
-def start(app, story_id: int) -> str:
+def start(app, story_id: int, resume: bool = True) -> str:
+    """Queue a summary. While AI work is paused, `resume` (someone asked for it) starts every AI queue
+    again; without it (a summary after a download) the story only waits."""
+    from . import ai_queues
     with _lock:
         if _running.get('story_id') == story_id:
             raise ValueError('A summary for this story is already being written.')
-        if story_id in _queue:
-            return 'queued'
-        _queue.append(story_id)
-        _errors.pop(story_id, None)
-        _persist()
-        if _running.get('working'):
-            return 'queued'
+        queued = story_id in _queue
+        if not queued:
+            _queue.append(story_id)
+            _errors.pop(story_id, None)
+            _persist()
+    if ai_queues.paused():
+        if resume:
+            ai_queues.resume(app, 'AI work was asked for')
+        return 'queued'
+    if queued:
+        return 'queued'
+    return 'started' if kick(app) else 'queued'
+
+
+def kick(app) -> bool:
+    """Start the worker if stories are waiting and it is not running (after a pause). Returns whether it started."""
+    from . import ai_queues
+    if ai_queues.paused():
+        return False
+    with _lock:
+        if _running.get('working') or not _queue:
+            return False
         _running['working'] = True
     threading.Thread(target=_work, args=(app,), daemon=True, name='AISummaries').start()
-    return 'started'
+    return True
 
 
 def _work(app) -> None:
     from app.models import db
+    from . import ai_queues
+    from .ai_cover import StopError
     while True:
         with _lock:
-            if not _queue:
+            if not _queue or ai_queues.paused():
                 _running.clear()
                 return
             story_id = _queue.popleft()
@@ -222,6 +244,13 @@ def _work(app) -> None:
         try:
             with app.app_context():
                 make(story_id)
+        except StopError as error:
+            # Nothing else could get through either: this story goes back to the front, and AI work pauses.
+            log_error(f'AI summary for story {story_id} paused: {error}')
+            with _lock:
+                if story_id not in _queue:
+                    _queue.appendleft(story_id)
+            ai_queues.pause(app, error)
         except Exception as error:
             message = str(error) if isinstance(error, ValueError) else 'Writing the summary stopped unexpectedly.'
             log_error(f'AI summary for story {story_id} failed: {error}')
@@ -251,7 +280,7 @@ def restore(app) -> None:
         items = [i for i in ai_queues.load('summary') if db.session.get(Story, i[0])]
     for story_id, _ in items:
         try:
-            start(app, story_id)
+            start(app, story_id, resume=False)
         except ValueError:
             pass
     if items:
