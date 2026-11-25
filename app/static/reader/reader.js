@@ -215,10 +215,222 @@
       lastScrollTop = currentScrollTop;
     }, { passive: true });
 
-    document.addEventListener('click', () => {
-      if (isHidden) showHeader();
+    document.addEventListener('click', (e) => {
+      if (isHidden && !e.readerPageTurn) showHeader();
     });
   }
+
+  // --- Back to the library -------------------------------------------------------------------
+  // Opened from the library, going back returns to it as it was left (its filters and scroll position).
+  document.querySelectorAll('[data-library-link]').forEach(link => link.addEventListener('click', event => {
+    try {
+      const from = new URL(document.referrer);
+      if (from.origin === location.origin && from.pathname === '/' && history.length > 1) {
+        event.preventDefault();
+        history.back();
+      }
+    } catch (_) { /* No referrer: follow the link. */ }
+  }));
+
+  function readPref(name, fallback) {
+    try {
+      const value = localStorage.getItem(name);
+      return value === null ? fallback : value === 'on';
+    } catch (_) { return fallback; }
+  }
+  function writePref(name, on) {
+    try { localStorage.setItem(name, on ? 'on' : 'off'); } catch (_) {}
+  }
+
+  // --- Parts: one at a time, the contents panel, previous and next ------------------------------
+  const parts = [...document.querySelectorAll('.story-content .chapter[data-part]')];
+  const contentsPanel = document.getElementById('contentsPanel');
+  const contentsToggle = document.getElementById('contentsToggle');
+  const partModeToggle = document.getElementById('partModeToggle');
+  let partMode = parts.length > 1 && readPref('readerPartMode', true);
+  let activePart = parts[0] || null;
+
+  function headerOffset() {
+    const header = document.querySelector('.reader-header');
+    return header && !header.classList.contains('hidden') ? header.offsetHeight + 8 : 8;
+  }
+
+  function markCurrent() {
+    const number = activePart?.dataset.part;
+    document.querySelectorAll('.contents-list [data-part-link]').forEach(a =>
+      a.setAttribute('aria-current', String(a.dataset.partLink === number)));
+  }
+
+  function partOf(element) {
+    return element?.closest?.('.chapter[data-part]') || null;
+  }
+
+  // Show `part` (in one-part-at-a-time mode); returns whether the page changed.
+  function showPart(part) {
+    if (!part) return false;
+    const changed = part !== activePart;
+    activePart = part;
+    parts.forEach(p => p.classList.toggle('active-part', p === part));
+    const index = parts.indexOf(part);
+    document.body.dataset.firstPart = String(index === 0);
+    document.body.dataset.lastPart = String(index === parts.length - 1);
+    markCurrent();
+    return changed;
+  }
+
+  function scrollToPartStart(part) {
+    if (partMode && parts.indexOf(part) === 0) { window.scrollTo({ top: 0, behavior: 'instant' }); return; }
+    const top = part.getBoundingClientRect().top + window.scrollY - headerOffset();
+    window.scrollTo({ top: Math.max(0, top), behavior: 'instant' });
+  }
+
+  function goToPart(part, where = 'start') {
+    if (!part) return;
+    if (partMode) showPart(part);
+    if (where === 'end') {
+      const bottom = part.getBoundingClientRect().bottom + window.scrollY;
+      window.scrollTo({ top: Math.max(0, bottom - window.innerHeight), behavior: 'instant' });
+    } else {
+      scrollToPartStart(part);
+    }
+    activePart = part;
+    markCurrent();
+    window.dispatchEvent(new Event('scroll'));  // Saves the reading position.
+  }
+
+  function applyPartMode(on, keepPlace = true) {
+    partMode = on && parts.length > 1;
+    document.body.dataset.partMode = partMode ? 'on' : 'off';
+    if (partModeToggle) partModeToggle.checked = partMode;
+    if (!parts.length) return;
+    const anchor = keepPlace ? topParagraph() : null;
+    if (partMode) {
+      showPart(partOf(anchor) || activePart || parts[0]);
+    } else {
+      parts.forEach(p => p.classList.remove('active-part'));
+      delete document.body.dataset.firstPart;
+      delete document.body.dataset.lastPart;
+    }
+    if (anchor) anchor.scrollIntoView({ behavior: 'instant', block: 'start' });
+  }
+
+  // The first paragraph at the top of the screen (only the shown part counts).
+  function topParagraph() {
+    const scope = partMode && activePart ? activePart : document;
+    const paras = scope.querySelectorAll('p[data-chapter]');
+    for (const p of paras) {
+      if (p.getBoundingClientRect().top >= -10) return p;
+    }
+    return paras[paras.length - 1] || null;
+  }
+
+  // Make a paragraph reachable (its part shown) before scrolling to it.
+  function revealParagraph(element) {
+    const part = partOf(element);
+    if (part) { if (partMode) showPart(part); activePart = part; markCurrent(); }
+  }
+
+  function openContents(open) {
+    if (!contentsPanel) {
+      document.getElementById('table-of-contents')?.scrollIntoView({ behavior: 'instant', block: 'start' });
+      return;
+    }
+    contentsPanel.hidden = !open;
+    contentsToggle?.setAttribute('aria-expanded', String(open));
+    if (open) {
+      markCurrent();
+      contentsPanel.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  if (parts.length > 1) {
+    applyPartMode(partMode, false);
+    partModeToggle?.addEventListener('change', () => { writePref('readerPartMode', partModeToggle.checked); applyPartMode(partModeToggle.checked); });
+    contentsToggle?.addEventListener('click', event => { event.stopPropagation(); openContents(contentsPanel.hidden); });
+    document.addEventListener('click', event => {
+      const partLink = event.target.closest('[data-part-link]');
+      if (partLink) {
+        event.preventDefault();
+        openContents(false);
+        goToPart(document.getElementById(`chapter-${partLink.dataset.partLink}`));
+        return;
+      }
+      if (event.target.closest('[data-contents-open]')) {
+        event.preventDefault();
+        event.stopPropagation();
+        openContents(true);
+        return;
+      }
+      if (event.target.closest('[data-contents-close]') ||
+          (contentsPanel && !contentsPanel.hidden && !contentsPanel.contains(event.target))) {
+        openContents(false);
+      }
+    });
+    // The table of contents at the top links to each part too.
+    document.querySelectorAll('.toc-link[href^="#chapter-"]').forEach(a => {
+      a.dataset.partLink = a.getAttribute('href').slice('#chapter-'.length);
+    });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') openContents(false); });
+    // Keep the contents panel's current part up to date while scrolling through every part.
+    let partTimer = null;
+    window.addEventListener('scroll', () => {
+      if (partMode) return;
+      clearTimeout(partTimer);
+      partTimer = setTimeout(() => { const p = partOf(topParagraph()); if (p) { activePart = p; markCurrent(); } }, 200);
+    }, { passive: true });
+  } else {
+    document.body.dataset.partMode = 'off';
+  }
+
+  // --- Turning pages: tap the right side to go down a screen, the left side to go back ----------
+  // A page is the screen less two lines, so the last lines read stay in view. At the end of a part shown on its
+  // own, the next tap goes on to the next part (and back, at its start).
+  const tapToggle = document.getElementById('tapPagingToggle');
+  let tapPaging = readPref('readerTapPaging', window.matchMedia('(pointer: coarse)').matches);
+  function applyTapPaging(on) {
+    tapPaging = on;
+    document.body.dataset.tapPaging = on ? 'on' : 'off';
+    if (tapToggle) tapToggle.checked = on;
+  }
+  applyTapPaging(tapPaging);
+  tapToggle?.addEventListener('change', () => { writePref('readerTapPaging', tapToggle.checked); applyTapPaging(tapToggle.checked); });
+
+  function turnPage(direction) {
+    const style = getComputedStyle(document.body);
+    const line = (parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6 || 26);
+    const header = document.querySelector('.reader-header');
+    const covered = header && !header.classList.contains('hidden') ? header.offsetHeight : 0;
+    const step = Math.max(100, window.innerHeight - covered - 2 * line);
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    if (partMode && activePart) {
+      const index = parts.indexOf(activePart);
+      if (direction > 0 && window.scrollY >= max - 2 && index < parts.length - 1) { goToPart(parts[index + 1]); return; }
+      if (direction < 0 && window.scrollY <= 2 && index > 0) { goToPart(parts[index - 1], 'end'); return; }
+    }
+    window.scrollBy({ top: direction * step, behavior: 'instant' });
+  }
+
+  // Runs before the other click handlers (capture), so a page turn does not also show the top bar.
+  window.addEventListener('click', event => {
+    if (!tapPaging || event.button !== 0) return;
+    if (event.target.closest('a, button, input, select, textarea, label, summary, .reader-header, .settings-panel, ' +
+                             '.contents-panel, .rate-story-modal, .story-end-actions, .part-nav, .part-end-nav, .table-of-contents')) return;
+    if (settingsPanel.classList.contains('active') || (contentsPanel && !contentsPanel.hidden)) return;
+    if (String(window.getSelection?.() || '').trim()) return;  // Selecting text (to save a quote) is not a tap.
+    const x = event.clientX / window.innerWidth;
+    if (x > 0.3 && x < 0.7) return;  // The middle shows the top bar.
+    event.readerPageTurn = true;
+    turnPage(x >= 0.7 ? 1 : -1);
+  }, true);
+
+  document.addEventListener('keydown', event => {
+    if (event.target.closest?.('input, select, textarea') || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.key === 'ArrowRight') { event.preventDefault(); turnPage(1); }
+    else if (event.key === 'ArrowLeft') { event.preventDefault(); turnPage(-1); }
+  });
+
+  window.LitKeeperReader = { revealParagraph, topParagraph, parts, isPartMode: () => partMode };
+
 
   if (window.STORY_ID) {
     const storyId = window.STORY_ID;
@@ -326,22 +538,26 @@
     window.addEventListener('online', syncPending);
 
     // --- Scroll tracking ---
-    function getTopVisibleParagraph() {
-      const paras = document.querySelectorAll('p[data-chapter]');
-      for (const p of paras) {
-        const rect = p.getBoundingClientRect();
-        if (rect.top >= -10) return p;
-      }
-      return paras[paras.length - 1] || null;
+    const allParas = [...document.querySelectorAll('p[data-chapter]')];
+    const getTopVisibleParagraph = () => window.LitKeeperReader.topParagraph();
+
+    // How far through the whole story: by paragraph when one part is shown at a time (the page is then one part).
+    function storyPercentage(p) {
+      const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+      const pagePct = scrollable > 0 ? Math.min(1, window.scrollY / scrollable) : 0;
+      if (!window.LitKeeperReader.isPartMode() || !p || !allParas.length) return pagePct;
+      const index = allParas.indexOf(p);
+      const end = document.documentElement.scrollHeight - window.innerHeight;
+      if (window.scrollY >= end - 2 && document.body.dataset.lastPart === 'true') return 1;
+      return index < 0 ? pagePct : Math.min(1, index / allParas.length);
     }
 
     let scrollTimer = null;
     window.addEventListener('scroll', () => {
       clearTimeout(scrollTimer);
       scrollTimer = setTimeout(() => {
-        const scrollable = document.documentElement.scrollHeight - window.innerHeight;
-        const pct = scrollable > 0 ? Math.min(1, window.scrollY / scrollable) : 0;
         const p = getTopVisibleParagraph();
+        const pct = storyPercentage(p);
         const chapter = p ? parseInt(p.dataset.chapter, 10) : 1;
         const para = p ? parseInt(p.dataset.para, 10) : 0;
         const paragraphId = p ? p.id : null;
@@ -398,6 +614,7 @@
       if (chapterDataIsTrustworthy && paragraphId) {
         const el = document.getElementById(paragraphId);
         if (el) {
+          window.LitKeeperReader.revealParagraph(el);
           el.scrollIntoView({ behavior: 'instant', block: 'start' });
           return;
         }
@@ -407,12 +624,19 @@
       if (chapterDataIsTrustworthy && chapter && chapter > 0) {
         const target = document.querySelector(`[data-chapter="${chapter}"][data-para="${para}"]`);
         if (target) {
+          window.LitKeeperReader.revealParagraph(target);
           target.scrollIntoView({ behavior: 'instant', block: 'start' });
           return;
         }
       }
 
       // Priority 3: percentage fallback (works cross-format)
+      if (pct && pct > 0 && window.LitKeeperReader.isPartMode() && allParas.length) {
+        const target = allParas[Math.min(allParas.length - 1, Math.floor(pct * allParas.length))];
+        window.LitKeeperReader.revealParagraph(target);
+        target.scrollIntoView({ behavior: 'instant', block: 'start' });
+        return;
+      }
       if (pct && pct > 0) {
         const scrollable = document.documentElement.scrollHeight - window.innerHeight;
         if (scrollable > 0) {
@@ -427,6 +651,7 @@
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const target = document.querySelector(`[data-chapter="${ch1based}"][data-para="${window.TARGET_PARA}"]`);
         if (target) {
+          window.LitKeeperReader.revealParagraph(target);
           target.scrollIntoView({ behavior: 'instant', block: 'center' });
           target.classList.add('highlight-flash');
           setTimeout(() => target.classList.remove('highlight-flash'), 3500);

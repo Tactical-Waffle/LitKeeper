@@ -1,6 +1,41 @@
 {% extends "layouts/reader.html" %}
+{% set multipart = story.chapters|length > 1 %}
+
+{% block controls_contents %}
+{% if multipart %}
+<button id="contentsToggle" class="control-btn" aria-label="Table of contents" title="Table of contents" aria-expanded="false" aria-controls="contentsPanel">
+  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10"/></svg>
+</button>
+{% endif %}
+{% endblock %}
+
+{% block reading_options %}
+<div class="settings-group">
+  <label class="settings-label">Reading</label>
+  {% if multipart %}
+  <label class="settings-check"><input type="checkbox" id="partModeToggle"> One part at a time</label>
+  {% endif %}
+  <label class="settings-check"><input type="checkbox" id="tapPagingToggle"> Tap the sides to turn pages</label>
+  <p class="settings-hint">Tap the right side to go down a page and the left side to go back; the middle shows the top bar. The arrow keys work too.</p>
+</div>
+{% endblock %}
 
 {% block content %}
+{% if multipart %}
+{# The parts, from the button at the top and "Contents" beside each part: always reachable, wherever the reader is. #}
+<div id="contentsPanel" class="contents-panel" role="dialog" aria-label="Table of contents" hidden>
+  <div class="contents-panel-head">
+    <span class="contents-panel-title">Contents</span>
+    <button type="button" class="contents-close" data-contents-close aria-label="Close the table of contents">&times;</button>
+  </div>
+  <ol class="contents-list">
+    {% for chapter in story.chapters %}
+    <li><a href="#chapter-{{ chapter.number }}" data-part-link="{{ chapter.number }}">{{ chapter.title }}</a></li>
+    {% endfor %}
+  </ol>
+  <a href="/" class="contents-library" data-library-link>Back to the library</a>
+</div>
+{% endif %}
 <article class="story-container">
   {# The title is in the bar at the top, so the story starts with one short line instead of a large box. #}
   {% if story.author or story.category %}
@@ -18,8 +53,8 @@
   </p>
   {% endif %}
 
-  {% if story.chapters|length > 1 %}
-  <nav class="table-of-contents">
+  {% if multipart %}
+  <nav class="table-of-contents" id="table-of-contents">
     <h2 class="toc-title">Table of Contents</h2>
     <ol class="toc-list">
       {% for chapter in story.chapters %}
@@ -32,14 +67,29 @@
   <div class="story-content">
     {% set ns = namespace(para_idx=0) %}
     {% for chapter in story.chapters %}
-    <section class="chapter" id="chapter-{{ chapter.number }}">
-      {% if story.chapters|length > 1 %}<h2 class="chapter-title">{{ chapter.title }}</h2>{% endif %}
+    <section class="chapter" id="chapter-{{ chapter.number }}" data-part="{{ chapter.number }}">
+      {% if multipart %}
+      <h2 class="chapter-title">{{ chapter.title }}</h2>
+      <nav class="part-nav" aria-label="Part navigation">
+        {% if not loop.first %}<a href="#chapter-{{ loop.previtem.number }}" data-part-link="{{ loop.previtem.number }}">Previous part</a><span aria-hidden="true">·</span>{% endif %}
+        <a href="#table-of-contents" data-contents-open>Table of Contents</a>
+        {% if not loop.last %}<span aria-hidden="true">·</span><a href="#chapter-{{ loop.nextitem.number }}" data-part-link="{{ loop.nextitem.number }}">Next part</a>{% endif %}
+      </nav>
+      {% endif %}
       <div class="chapter-content">
         {% for paragraph in chapter.paragraphs %}
         <p id="para-{{ ns.para_idx }}" data-chapter="{{ chapter.number }}" data-para="{{ loop.index0 }}">{{ paragraph | safe }}</p>
         {% set ns.para_idx = ns.para_idx + 1 %}
         {% endfor %}
       </div>
+      {% if multipart %}
+      {# The end of each part: on to the next one (shown when the reader shows one part at a time). #}
+      <nav class="part-end-nav" aria-label="Part navigation">
+        {% if not loop.first %}<a href="#chapter-{{ loop.previtem.number }}" class="part-end-btn" data-part-link="{{ loop.previtem.number }}">‹ Previous part</a>{% else %}<span></span>{% endif %}
+        <a href="#table-of-contents" class="part-end-btn" data-contents-open>Contents</a>
+        {% if not loop.last %}<a href="#chapter-{{ loop.nextitem.number }}" class="part-end-btn part-end-next" data-part-link="{{ loop.nextitem.number }}">Next part ›</a>{% else %}<span></span>{% endif %}
+      </nav>
+      {% endif %}
     </section>
 
     {% if not loop.last %}
@@ -50,7 +100,6 @@
     {% endfor %}
   </div>
 
-  {% if story.source_url or story_id %}
   <div class="story-end-actions">
     {% if story_id %}
     <button id="rate-story-btn" class="story-end-btn">
@@ -70,8 +119,11 @@
       View Comments
     </a>
     {% endif %}
+    <a href="/" class="story-end-btn" data-library-link>
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+      Back to Library
+    </a>
   </div>
-  {% endif %}
 </article>
 {% if story_id %}
 <script>
@@ -101,6 +153,8 @@
     button.addEventListener('click', () => setRead(button.dataset.read !== 'true'));
     if ({{ 'true' if auto_mark_read else 'false' }} && button.dataset.read !== 'true') {
       const watch = () => {
+        // Showing one part at a time, only the end of the last part is the end of the story.
+        if (document.body.dataset.partMode === 'on' && document.body.dataset.lastPart !== 'true') return;
         const end = document.documentElement.scrollHeight - window.innerHeight;
         if (end > 0 && window.scrollY >= end - 40) {
           window.removeEventListener('scroll', watch);

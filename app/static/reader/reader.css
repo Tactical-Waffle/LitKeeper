@@ -771,3 +771,79 @@ a:hover {
   text-align: center;
 }
 .story-version-note a { color: var(--link-color); }
+
+/* --- Never scroll sideways ------------------------------------------------------------------
+   Long unbroken text (a web address, a row of dashes) wraps, pictures and tables shrink to fit,
+   and nothing can widen the page. */
+html, body { overflow-x: hidden; max-width: 100%; }
+.story-container { overflow-wrap: anywhere; word-break: normal; }
+.story-content img, .story-content video, .story-content iframe, .story-content table { max-width: 100%; height: auto; }
+.story-content table { display: block; overflow-x: auto; }
+.story-content pre { white-space: pre-wrap; }
+.settings-panel { max-height: calc(100vh - 5rem); max-height: calc(100dvh - 5rem); overflow-y: auto; max-width: calc(100vw - 2rem); }
+@media (max-width: 400px) { .settings-panel { min-width: 0; left: 1rem; } }
+
+/* --- Back to the library -------------------------------------------------------------------- */
+.control-btn.library-link { width: auto; border-radius: 999px; padding: 0 .9rem 0 .7rem; gap: .35rem; color: var(--text-color);
+  font: 600 .875rem -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.control-btn.library-link svg { width: 18px; height: 18px; }
+@media (max-width: 400px) { .control-btn.library-link span { display: none; } .control-btn.library-link { width: 44px; padding: 0; } }
+.reader-header { padding-top: calc(0.75rem + env(safe-area-inset-top, 0px)); }
+.header-right { gap: 0.4rem; }
+@media (max-width: 480px) { .header-center { padding: 0 0.5rem; } .control-btn { width: 40px; height: 40px; } }
+
+/* --- Reading options in the settings panel --------------------------------------------------- */
+.settings-check { display: flex; align-items: center; gap: .5rem; font-size: .875rem; color: var(--text-color); margin: .35rem 0;
+  cursor: pointer; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.settings-check input { width: 18px; height: 18px; accent-color: var(--accent-color); }
+.settings-hint { font-size: .75rem; line-height: 1.4; color: var(--secondary-text); margin-top: .35rem; max-width: 260px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+/* --- Moving between parts ------------------------------------------------------------------- */
+.part-nav { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: -1rem 0 1.25rem; font-size: .8125rem;
+  color: var(--secondary-text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.part-nav a { text-decoration: none; }
+.part-nav a:hover { text-decoration: underline; }
+.part-end-nav { display: none; grid-template-columns: 1fr auto 1fr; gap: .5rem; align-items: center; margin: 2.5rem 0 1rem; }
+.part-end-btn { display: inline-flex; justify-content: center; align-items: center; min-height: 44px; padding: .5rem 1rem;
+  border: 1px solid var(--separator-color); border-radius: 999px; text-decoration: none; color: var(--secondary-text);
+  font: 500 .875rem -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; white-space: nowrap; }
+.part-end-btn:hover { color: var(--accent-color); border-color: var(--accent-color); }
+.part-end-nav > :first-child { justify-self: start; }
+.part-end-nav > :last-child { justify-self: end; }
+.part-end-next { color: #fff; background: var(--accent-color); border-color: var(--accent-color); }
+.part-end-next:hover { color: #fff; filter: brightness(1.08); }
+
+/* One part at a time: only the part being read is on the page. */
+body[data-part-mode="on"] .chapter:not(.active-part),
+body[data-part-mode="on"] .chapter-separator { display: none; }
+body[data-part-mode="on"] .part-end-nav { display: grid; }
+body[data-part-mode="on"]:not([data-first-part="true"]) .table-of-contents,
+body[data-part-mode="on"]:not([data-first-part="true"]) .story-byline,
+body[data-part-mode="on"]:not([data-first-part="true"]) .story-version-note { display: none; }
+body[data-part-mode="on"]:not([data-last-part="true"]) .story-end-actions { display: none; }
+body[data-part-mode="on"] .story-content { margin-top: 1rem; }
+
+/* --- Contents panel ------------------------------------------------------------------------ */
+.contents-panel { position: fixed; z-index: 1001; top: calc(4.5rem + env(safe-area-inset-top, 0px)); right: 1rem;
+  width: min(360px, calc(100vw - 2rem)); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem); overflow-y: auto;
+  background: var(--bg-color); border: 1px solid var(--separator-color); border-radius: 12px; padding: .75rem 1rem 1rem;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .15); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.contents-panel[hidden] { display: none; }
+[data-theme="dark"] .contents-panel { box-shadow: 0 10px 40px rgba(0, 0, 0, .5); }
+.contents-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .25rem; }
+.contents-panel-title { font-weight: 600; font-size: 1rem; color: var(--text-color); }
+.contents-close { background: none; border: 0; font-size: 1.75rem; line-height: 1; width: 44px; height: 44px; margin-right: -.75rem;
+  color: var(--secondary-text); cursor: pointer; }
+.contents-list { list-style: none; }
+.contents-list a { display: block; padding: .55rem .5rem; border-radius: 8px; text-decoration: none; font-size: .9375rem;
+  color: var(--text-color); overflow-wrap: anywhere; }
+.contents-list a:hover { background: var(--header-bg); }
+.contents-list a[aria-current="true"] { color: var(--accent-color); font-weight: 600; background: var(--header-bg); }
+.contents-library { display: block; margin-top: .5rem; padding: .55rem .5rem; border-top: 1px solid var(--separator-color);
+  font-size: .875rem; text-decoration: none; }
+
+/* Tapping the page to turn it: no tap flash, and touch devices send the tap to the page. */
+@media (pointer: coarse) {
+  body[data-tap-paging="on"] .story-content { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+}
