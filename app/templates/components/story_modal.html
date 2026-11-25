@@ -442,9 +442,13 @@
 </style>
 
 <script>
-const _scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-document.body.style.paddingRight = _scrollbarWidth + 'px';
-document.body.style.overflow = 'hidden';
+// In a block: this script runs each time a story window opens, and a top-level const could not be declared twice
+// (the second window's script stopped here, so the page behind it could scroll and swiping down did nothing).
+{
+  const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+  document.body.style.paddingRight = scrollbarWidth + 'px';
+  document.body.style.overflow = 'hidden';
+}
 
 // Swipe-to-dismiss for mobile sheet
 (function() {

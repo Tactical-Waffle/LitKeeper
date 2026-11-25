@@ -101,6 +101,9 @@
   <div class="story-card cursor-pointer"
        data-story-id="{{ story.id }}"
        data-story-filename="{{ story.filename_base }}.html"
+       data-read="{{ '1' if story.is_read else '0' }}"
+       data-in-queue="{{ '1' if story.in_queue else '0' }}"
+       data-reader="{{ '/read/' ~ story.id if story.html_file and ('json' in story.formats or 'html' in story.formats) else ('/epub/reader/' ~ story.id if story.epub_file else '') }}"
        {% if 'epub' in story.formats %}data-epub-story-id="{{ story.id }}"{% endif %}
        hx-get="/api/story/{{ story.id }}/modal"
        hx-target="#modal-container"

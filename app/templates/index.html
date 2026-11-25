@@ -1031,6 +1031,13 @@ function toggleAddStories() {
 
 /* Picking several stories */
 .story-select-mark { display: none; }
+/* The library's right-click menu (library-menu.js). */
+.story-menu { position: fixed; z-index: 60; min-width: 13rem; padding: .3rem; border-radius: 10px; border: 1px solid rgb(148 163 184 / .35);
+  background: #fff; color: rgb(23 32 51); box-shadow: 0 10px 30px rgb(0 0 0 / .25); }
+[data-theme="dark"] .story-menu { background: rgb(31 41 55); color: rgb(229 231 235); }
+.story-menu button { display: block; width: 100%; text-align: left; padding: .5rem .7rem; border: 0; border-radius: 6px; background: none; color: inherit; font-size: .9rem; }
+.story-menu button:hover, .story-menu button:focus-visible { background: rgb(79 70 229); color: #fff; outline: none; }
+.story-menu hr { border: 0; border-top: 1px solid rgb(148 163 184 / .25); margin: .25rem 0; }
 #library.selecting .story-select-mark {
   display: flex; position: absolute; top: 0.4rem; left: 0.4rem; z-index: 2;
   width: 1.5rem; height: 1.5rem; align-items: center; justify-content: center;

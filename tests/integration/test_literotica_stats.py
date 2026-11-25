@@ -207,3 +207,18 @@ class TestStoryWindowLayout:
         with patch('app.services.ai_cover.info', return_value={'queued': True, 'running': False}):
             html = client.get(f'/api/story/{story_id}/modal').get_data(as_text=True)
         assert 'data-story-group="ai" open' in html and 'working…' in html
+
+
+@pytest.mark.integration
+class TestRightClickMenu:
+    """The library's right-click menu (from RedKeeper) reads each card's read, queue and reader state."""
+
+    def test_cards_carry_their_state(self, app, client: FlaskClient, add_story) -> None:
+        story_id = add_story('Menu Story', in_queue=True)
+        html = client.get('/library/filter?sort_by=date&sort_order=desc').get_data(as_text=True)
+        card = html[html.index(f'data-story-id="{story_id}"'):][:600]
+        assert 'data-read="0"' in card and 'data-in-queue="1"' in card and f'data-reader="/read/{story_id}"' in card
+        client.post(f'/api/story/{story_id}/read', json={'read': True})
+        card = client.get(f'/api/story/{story_id}/card').get_data(as_text=True)
+        assert 'data-read="1"' in card and 'data-in-queue="0"' in card  # Reading takes it off the queue.
+        assert '/static/js/library-menu.js' in client.get('/').get_data(as_text=True)
