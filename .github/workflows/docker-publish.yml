@@ -3,6 +3,7 @@ name: Docker
 # Builds the litkeeparr image and publishes it to GitHub's container registry:
 #   ghcr.io/tactical-waffle/litkeeparr:latest
 # It runs on every push to the litkeeparr branch, and can be started by hand from the Actions tab.
+# The tests run first; the image is built and published only when they all pass.
 
 on:
   push:
@@ -21,7 +22,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python (the image uses 3.13)
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run the tests
+        run: python -m pytest -q -p no:cacheprovider
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
