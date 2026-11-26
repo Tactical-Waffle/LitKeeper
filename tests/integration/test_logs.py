@@ -35,7 +35,11 @@ def clean(app: Flask, monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture
 def folder(tmp_path: Path) -> Path:
-    return tmp_path
+    # A folder of its own: tmp_path also holds the test library's data folder, and on Linux a folder's size (4 KB)
+    # would count against the size checks below.
+    logs_folder = tmp_path / 'test-logs'
+    logs_folder.mkdir()
+    return logs_folder
 
 
 def _handler(folder: Path, name='litkeeper.log', max_bytes=0, days=30):
