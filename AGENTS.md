@@ -1,5 +1,10 @@
 # LitKeeper (litkeeparr fork)
 
+> **Retired 2026-11-26.** This app was merged into **NightStand** (`~/Projects/Codex/NightStand`, repository
+> `Tactical-Waffle/nightstand`), which now runs on omega in its place; its data folders were renamed to NightStand's. Do new work
+> in NightStand (read its `HANDOFF.md`). This repository is kept for reference; its service stays in omega's compose
+> override with `profiles: ["legacy-litkeeper"]` so it does not start (the container itself was removed).
+
 Instructions for coding agents (Codex, Claude Code and others) working in this repository. `README.md` describes
 every feature; read the parts that touch what you change. `DEPLOY-LITKEEPARR.md` covers deployment.
 
